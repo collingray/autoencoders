@@ -1,0 +1,7 @@
+torch
+datasets
+sentencepiece
+transformer_lens
+wandb
+transformers
+pytest
