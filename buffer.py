@@ -1,8 +1,52 @@
 import torch
+import datasets
 from transformer_lens import HookedTransformer
-from transformers import AutoModelForCausalLM
 
-from utils import *
+
+class ActivationsBufferConfig:
+    def __init__(
+            self,
+            model_name,
+            layers,
+            dataset_name,
+            act_site="mlp_out",
+            dataset_split=None,
+            buffer_size=256,
+            min_capacity=128,
+            model_batch_size=8,
+            act_size=None,
+            device="cuda",
+            dtype=torch.bfloat16,
+    ):
+        """
+        :param model_name: the hf model name
+        :param layers: which layers to get activations from, passed as a list of ints
+        :param dataset_name: the name of the hf dataset to use
+        :param act_site: the tl key to get activations from
+        :param dataset_split: the split of the dataset to use
+        :param buffer_size: the size of the buffer, in number of activations
+        :param min_capacity: the minimum guaranteed capacity of the buffer, in number of activations, used to determine
+        when to refresh the buffer
+        :param model_batch_size: the batch size to use in the model when generating activations
+        :param act_size: the size of the activations vectors. If None, it will use the size provided by the model's cfg
+        :param device: the device to use for the buffer and model
+        :param dtype: the dtype to use for the buffer and model
+        """
+
+        assert isinstance(layers, list) and len(layers) > 0, "layers must be a non-empty list of ints"
+
+        self.model_name = model_name
+        self.layers = layers
+        self.dataset_name = dataset_name
+        self.act_names = [act_site + str(layer) for layer in layers]  # the tl keys to grab activations from todo
+        self.dataset_split = dataset_split
+        self.buffer_size = buffer_size
+        self.min_capacity = min_capacity
+        self.model_batch_size = model_batch_size
+        self.act_size = act_size
+        self.device = device
+        self.dtype = dtype
+        self.final_layer = max(layers)  # the final layer that needs to be run
 
 
 class ActivationsBuffer:
@@ -16,72 +60,87 @@ class ActivationsBuffer:
     unclear why this is done, probably just a hack to avoid having to worry about overflows
     """
 
-    def __init__(self, cfg):
-        self.buffer = torch.zeros((cfg["buffer_size"], cfg["act_size"]), dtype=torch.bfloat16).to(cfg["device"])
+    def __init__(self, cfg: ActivationsBufferConfig, hf_model=None):
         self.cfg = cfg
-        # pointer to read/write location in the buffer, reset to 0 when refresh is called
-        self.buffer_pointer = 0
-        # pointer to the start of the next token sequence in the dataset, incremented in steps of model_batch_size
-        self.token_pointer = 0
-        # the number of batches to read in whenever the buffer is refreshed, buffer_batches on the first refresh and
-        # buffer_batches // 2 on subsequent refreshes
-        self.num_batches = self.cfg["buffer_batches"]
+        # the buffer to store activations in, with shape (buffer_size, len(layers), act_size)
+        self.buffer = torch.zeros((cfg.buffer_size, len(self.cfg.layers), cfg.act_size), dtype=cfg.dtype).to(cfg.device)
 
-        # load the model, using the local path if provided
-        if "model_path" in cfg.keys():
-            # load into cpu first, to avoid gpu memory issues
-            hf_model = AutoModelForCausalLM.from_pretrained(cfg["model_path"], torch_dtype="auto").to(device="cpu", dtype=DTYPES[cfg["enc_dtype"]])
+        # pointer to read/write location in the buffer, reset to 0 after refresh is called
+        # starts at buffer_size to be fully filled on first refresh
+        self.buffer_pointer = self.cfg.buffer_size
 
-            self.model = HookedTransformer.from_pretrained_no_processing(model_name=cfg["model_name"], hf_model=hf_model, device=cfg["device"], dtype=DTYPES[cfg["enc_dtype"]])
+        # pointer to the current position in the dataset
+        self.dataset_pointer = 0
 
-            # the tokenizer isn't used, but errors are thrown if it's not present
-            self.model.tokenizer = LlamaTokenizerFast.from_pretrained(TOKENIZER_PATH)
+        # load, shuffle, and flatten the dataset
+        self.dataset = datasets.load_dataset(cfg.dataset_name, split=cfg.dataset_split).shuffle().flatten_indices()
 
-            # delete the cpu copy to free up memory
-            del hf_model
-        else:
-            self.model = HookedTransformer.from_pretrained(model_name=cfg["model_name"], device=cfg["device"], dtype=DTYPES[cfg["enc_dtype"]])
+        # load the model into a HookedTransformer
+        self.model = HookedTransformer.from_pretrained_no_processing(
+            model_name=cfg.model_name,
+            hf_model=hf_model,
+            device=cfg.device,
+            dtype=cfg.dtype
+        )
 
+        # if the act_size is not provided, use the size from the model's cfg
+        if cfg.act_size is None:
+            self.cfg.act_size = self.model.cfg.d_mlp
+
+        # initial buffer fill
         self.refresh()
 
     @torch.no_grad()
     def refresh(self):
-        self.buffer_pointer = 0
+        """
+        Whenever the buffer is refreshed, we remove the first `buffer_pointer` activations that were used, shift the
+        remaining activations to the start of the buffer, and then fill the rest of the buffer with `buffer_pointer` new
+        activations from the model.
+        """
 
-        model_batch_size = self.cfg["model_batch_size"]
-        layer = self.cfg["layer"]
-        act_name = self.cfg["act_name"]
-        act_size = self.cfg["act_size"]
+        # remove the first `buffer_pointer` activations that were used
+        self.buffer[:self.buffer_pointer] = self.buffer[self.buffer_pointer:]
 
-        with torch.autocast("cuda", torch.bfloat16):
-            # iterates through the dataset in order to fill up the buffer with activations from the model after
-            # passing in model_batch_size tokens at a time
-            for _ in range(0, self.num_batches, model_batch_size):
-                # grab next model_batch_size tokens from the dataset
-                tokens = data[self.token_pointer:self.token_pointer + model_batch_size]
-                # run the model on the tokens, stopping at the specified layer and grabbing the activations for the
-                # specified layer
-                _, cache = self.model.run_with_cache(tokens, stop_at_layer=layer + 1, names_filter=act_name)
-                # reshape the activations to be 2D, with each row being a single activation vector of size act_size
-                acts = cache[act_name, layer].reshape(-1, act_size)
+        # fill the rest of the buffer with `buffer_pointer` new activations from the model
+        while self.buffer_pointer > 0:
+            # if we have less than a full `model_batch_size` left to get, use the remaining sequences
+            batch_size = min(self.buffer_pointer, self.cfg.model_batch_size)
 
-                # write the activations to the buffer, overwriting previous values
-                self.buffer[self.buffer_pointer: self.buffer_pointer + acts.shape[0]] = acts
-                # increment the buffer pointer by the number of activations written
-                self.buffer_pointer += acts.shape[0]
-                # increment the token pointer by the number of tokens processed
-                self.token_pointer += model_batch_size
+            # get the next batch of text from the dataset (batch_size, seq_len)
+            seqs = self.dataset['text'][self.dataset_pointer:self.dataset_pointer + batch_size]
 
-        self.num_batches = self.cfg["buffer_batches"] // 2
-        self.buffer_pointer = 0
-        self.buffer = self.buffer[torch.randperm(self.buffer.shape[0]).to(self.cfg["device"])]
+            # update the dataset pointer
+            self.dataset_pointer = (self.dataset_pointer + batch_size) % len(self.dataset['text'])
+
+            # run the seqs through the model to get the activations
+            out, cache = self.model.run_with_cache(seqs, stop_at_layer=self.cfg.final_layer,
+                                                   names_filter=self.cfg.act_names)
+
+            # clean up logits in order to free the graph memory
+            del out
+            torch.cuda.empty_cache()
+
+            # store the activations (batch_size, len(layers), act_size) in the buffer
+            acts = torch.stack([cache[name] for name in self.cfg.act_names], dim=1)
+            write_pointer = self.cfg.buffer_size - self.buffer_pointer
+            self.buffer[write_pointer:write_pointer + batch_size] = acts
+
+            # update the buffer pointer
+            self.buffer_pointer -= batch_size
+
+        assert self.buffer_pointer == 0, "Buffer pointer should be 0 after refresh"
 
     @torch.no_grad()
-    def next(self):
-        batch_size = self.cfg["batch_size"]
-        out = self.buffer[self.buffer_pointer:self.buffer_pointer + batch_size]
-        self.buffer_pointer += batch_size
-        if self.buffer_pointer > self.buffer.shape[0] // 2 - batch_size:
-            # print("Refreshing the buffer!")
+    def next(self, batch: int = None):
+        if self.cfg.buffer_size - (self.buffer_pointer + (batch or 1)) < self.cfg.min_capacity:
+            print("Refreshing the buffer!")
             self.refresh()
+
+        if batch is None:
+            out = self.buffer[self.buffer_pointer]
+        else:
+            out = self.buffer[self.buffer_pointer:self.buffer_pointer + batch]
+
+        self.buffer_pointer += batch or 1
+
         return out
