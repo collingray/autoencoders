@@ -17,6 +17,7 @@ class ActivationsBufferConfig:
             model_batch_size=8,
             samples_per_seq=16,
             act_size=None,
+            seed=None,
             device="cuda",
             dtype=torch.bfloat16,
     ):
@@ -32,6 +33,7 @@ class ActivationsBufferConfig:
         :param model_batch_size: the batch size to use in the model when generating activations
         :param samples_per_seq: the number of activations to randomly sample from each sequence
         :param act_size: the size of the activations vectors. If None, it will use the size provided by the model's cfg
+        :param seed: the seed to use for dataset shuffling and activation sampling
         :param device: the device to use for the buffer and model
         :param dtype: the dtype to use for the buffer and model
         """
@@ -48,6 +50,7 @@ class ActivationsBufferConfig:
         self.model_batch_size = model_batch_size
         self.samples_per_seq = samples_per_seq
         self.act_size = act_size
+        self.seed = seed
         self.device = device
         self.dtype = dtype
         self.final_layer = max(layers)  # the final layer that needs to be run
@@ -67,11 +70,14 @@ class ActivationsBuffer:
     def __init__(self, cfg: ActivationsBufferConfig, hf_model=None):
         self.cfg = cfg
 
+        if cfg.seed:
+            torch.manual_seed(cfg.seed)
+
         # pointer to the current position in the dataset
         self.dataset_pointer = 0
 
         # load, shuffle, and flatten the dataset
-        self.dataset = datasets.load_dataset(cfg.dataset_name, split=cfg.dataset_split).shuffle().flatten_indices()
+        self.dataset = datasets.load_dataset(cfg.dataset_name, split=cfg.dataset_split).shuffle(seed=cfg.seed).flatten_indices()
 
         # load the model into a HookedTransformer
         self.model = HookedTransformer.from_pretrained_no_processing(
