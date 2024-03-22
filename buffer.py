@@ -19,6 +19,7 @@ class ActivationsBufferConfig:
             act_size=None,
             seed=None,
             device="cuda",
+            buffer_device=None,
             dtype=torch.bfloat16,
     ):
         """
@@ -34,7 +35,8 @@ class ActivationsBufferConfig:
         :param samples_per_seq: the number of activations to randomly sample from each sequence
         :param act_size: the size of the activations vectors. If None, it will use the size provided by the model's cfg
         :param seed: the seed to use for dataset shuffling and activation sampling
-        :param device: the device to use for the buffer and model
+        :param device: the device to use for the model
+        :param buffer_device: the device to use for the buffer. If None, it will use the same device as the model
         :param dtype: the dtype to use for the buffer and model
         """
 
@@ -52,6 +54,7 @@ class ActivationsBufferConfig:
         self.act_size = act_size
         self.seed = seed
         self.device = device
+        self.buffer_device = buffer_device or device
         self.dtype = dtype
         self.final_layer = max(layers)  # the final layer that needs to be run
 
@@ -92,7 +95,7 @@ class ActivationsBuffer:
             self.cfg.act_size = self.model.cfg.d_mlp
 
         # the buffer to store activations in, with shape (buffer_size, len(layers), act_size)
-        self.buffer = torch.zeros((cfg.buffer_size, len(self.cfg.layers), cfg.act_size), dtype=cfg.dtype).to(cfg.device)
+        self.buffer = torch.zeros((cfg.buffer_size, len(self.cfg.layers), cfg.act_size), dtype=cfg.dtype).to(cfg.buffer_device)
 
         # pointer to read/write location in the buffer, reset to 0 after refresh is called
         # starts at buffer_size to be fully filled on first refresh
@@ -138,7 +141,7 @@ class ActivationsBuffer:
             write_pointer = self.cfg.buffer_size - self.buffer_pointer
 
             new_acts = min(acts.shape[0], self.buffer_pointer)  # the number of acts to write, capped by buffer_pointer
-            self.buffer[write_pointer:write_pointer + acts.shape[0]] = acts[:new_acts]
+            self.buffer[write_pointer:write_pointer + acts.shape[0]] = acts[:new_acts].to(self.cfg.buffer_device)
 
             # update the buffer pointer by the number of activations we just added
             self.buffer_pointer -= new_acts
