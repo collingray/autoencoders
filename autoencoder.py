@@ -1,68 +1,116 @@
 import json
 import torch
 import torch.nn as nn
-from utils import DTYPES
+
+
+class AutoEncoderConfig:
+    def __init__(
+            self,
+            n_dim,
+            m_dim,
+            seed=None,
+            device="cuda",
+            lambda_reg=0.01,
+            dtype=torch.bfloat16,
+            name="autoencoder",
+            save_dir="./weights",
+    ):
+        """
+        :param n_dim: the dimension of the input
+        :param m_dim: the dimension of the hidden layer
+        :param seed: the seed to use for pytorch rng
+        :param device: the device to use for the model
+        :param lambda_reg: the regularization strength
+        :param dtype: the dtype to use for the model
+        :param name: the name to use when saving the model
+        :param save_dir: the directory to save the model to
+        """
+
+        self.n_dim = n_dim
+        self.m_dim = m_dim
+        self.seed = seed
+        self.device = device
+        self.lambda_reg = lambda_reg
+        self.dtype = dtype
+        self.name = name
+        self.save_dir = save_dir
+
+
+class AutoEncoderConfigEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, AutoEncoderConfig):
+            o_dict = o.__dict__
+            o_dict["dtype"] = o_dict["dtype"].__str__()[6:]
+            return o_dict
+
+        return json.JSONEncoder.default(self, o)
+
+
+class AutoEncoderConfigDecoder(json.JSONDecoder):
+    def __init__(self):
+        super().__init__(object_hook=self.dict_to_object)
+
+    @staticmethod
+    def dict_to_object(d):
+        if "dtype" in d:
+            d["dtype"] = getattr(torch, d["dtype"])
+        return AutoEncoderConfig(**d)
 
 
 class AutoEncoder(nn.Module):
     """
     Autoencoder model with a single hidden layer
-    m >= n (overcomplete)
-    this is done to help disentangle features (i think)
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: AutoEncoderConfig):
         super().__init__()
 
-        n = cfg["n_dim"]
-        m = cfg["m_dim"]
-        torch.manual_seed(cfg["seed"])
-        device = cfg["device"]
-        dtype = DTYPES[cfg["dtype"]]
+        self.cfg = cfg
 
-        self.lambda_reg = cfg["lambda_reg"]
-        self.name = cfg["name"]
-        self.version = cfg["version"]
-        self.save_dir = cfg["save_dir"]
+        if cfg.seed:
+            torch.manual_seed(cfg.seed)
 
-        # todo: nn's impl. using he initialization here, might be worth looking into that/other initialization dists.
+        self.pre_encoder_bias = nn.Parameter(torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype))
         # encoder linear layer, goes from the models embedding space to the hidden layer
-        self.encoder = nn.Linear(n, m, bias=True, device=device, dtype=dtype)
-        # decoder linear layer, goes from the hidden layer back to models embeddings
-        self.decoder = nn.Linear(m, n)
+        self.encoder = nn.Linear(cfg.n_dim, cfg.m_dim, bias=False, device=cfg.device, dtype=cfg.dtype)
+        self.pre_activation_bias = nn.Parameter(torch.zeros(cfg.m_dim, device=cfg.device, dtype=cfg.dtype))
         self.relu = nn.ReLU()
+        # decoder linear layer, goes from the hidden layer back to models embeddings
+        self.decoder = nn.Linear(cfg.m_dim, cfg.n_dim, bias=False, device=cfg.device, dtype=cfg.dtype)
 
     def forward(self, x):
-        x_centered = x - self.decoder.bias
-        f = self.relu(self.encoder(x_centered))
-        x_reconstructed = self.decoder(f)
-        loss = self.__loss(x, x_reconstructed, f, self.lambda_reg)
-        return f, loss
+        encoded = self.encode(x)
+        reconstructed = self.decode(encoded)
+        loss = self.__loss(x, reconstructed, encoded, self.cfg.lambda_reg)
+        return encoded, loss
+
+    def encode(self, x):
+        x = x - self.pre_encoder_bias
+        return self.relu(self.encoder(x) + self.pre_activation_bias)
+
+    def decode(self, x):
+        return self.decoder(x) + self.pre_encoder_bias
 
     @staticmethod
-    def __loss(x, x_out, f, lambda_reg):
-        l1_loss = lambda_reg * f.abs().sum() # L1 loss, promotes sparsity
-        l2_loss = torch.mean((x_out - x) ** 2) # L2 loss, reconstruction loss
+    def __loss(x, x_out, latent, lambda_reg):
+        l1_loss = lambda_reg * latent.abs().sum()  # L1 loss, promotes sparsity
+        l2_loss = torch.mean((x_out - x) ** 2)  # L2 loss, reconstruction loss
         return l1_loss + l2_loss
-
-    @staticmethod
-    def filename(name, version, checkpoint):
-        return f"{name}_v{version}_c{checkpoint}"
 
     def save(self, checkpoint):
         # save the model
-        filename = self.filename(self.name, self.version, checkpoint)
-        torch.save(self.state_dict(), f"{self.save_dir}/{filename}.pt")
-        with open(f"{self.save_dir}/{filename}_cfg.json", "w") as f:
-            json.dump(self.cfg, f)
-        print(f"Saved model to {self.save_dir}/{filename}.pt")
+        filename = f"{self.cfg.name}_{checkpoint}"
+        torch.save(self.state_dict(), f"{self.cfg.save_dir}/{filename}.pt")
+        with open(f"{self.cfg.save_dir}/{self.cfg.name}_cfg.json", "w") as f:
+            json.dump(self.cfg, f, cls=AutoEncoderConfigEncoder)
+        print(f"Saved model to {self.cfg.save_dir}/{filename}.pt")
 
     @classmethod
-    def load(cls, name, version, checkpoint, save_dir):
-        filename = cls.filename(name, version, checkpoint)
-        with open(f"{save_dir}/{filename}_cfg.json", "r") as f:
-            cfg = json.load(f)
+    def load(cls, name, checkpoint, save_dir="./weights"):
+        filename = f"{save_dir}/{name}_{checkpoint}.pt"
+        with open(f"{save_dir}/{name}_cfg.json", "r") as f:
+            cfg = json.load(f, cls=AutoEncoderConfigDecoder)
         model = cls(cfg)
-        model.load_state_dict(torch.load(f"{save_dir}/{filename}.pt"))
-        print(f"Loaded model from {save_dir}/{filename}.pt")
+        model.load_state_dict(torch.load(filename))
+        print(f"Loaded model from {filename}")
         return model
