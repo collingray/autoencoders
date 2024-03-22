@@ -106,8 +106,16 @@ class ActivationsBuffer:
         if cfg.act_size is None:
             self.cfg.act_size = self.model.cfg.d_mlp
 
+        # if the buffer is on the cpu, pin it to memory for faster transfer to the gpu
+        pin_memory = cfg.buffer_device == "cpu"
+
         # the buffer to store activations in, with shape (buffer_size, len(layers), act_size)
-        self.buffer = torch.zeros((cfg.buffer_size, len(self.cfg.layers), cfg.act_size), dtype=cfg.dtype).to(cfg.buffer_device)
+        self.buffer = torch.zeros(
+            (cfg.buffer_size, len(self.cfg.layers), cfg.act_size),
+            dtype=cfg.dtype,
+            pin_memory=pin_memory,
+            device=cfg.buffer_device
+        )
 
         # pointer to read/write location in the buffer, reset to 0 after refresh is called
         # starts at buffer_size to be fully filled on first refresh
@@ -161,7 +169,7 @@ class ActivationsBuffer:
             write_pointer = self.cfg.buffer_size - self.buffer_pointer
 
             new_acts = min(acts.shape[0], self.buffer_pointer)  # the number of acts to write, capped by buffer_pointer
-            self.buffer[write_pointer:write_pointer + acts.shape[0]] = acts[:new_acts].to(self.cfg.buffer_device)
+            self.buffer[write_pointer:write_pointer + acts.shape[0]] = acts[:new_acts].clone()
 
             # update the buffer pointer by the number of activations we just added
             self.buffer_pointer -= new_acts

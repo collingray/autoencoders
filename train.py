@@ -37,7 +37,8 @@ optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), 
 try:
     prev_time = time.time()
     for i in tqdm(range(num_activations // batch_size)):
-        enc, l1, l2, loss = encoder.forward(buffer.next(batch=batch_size).to(encoder_cfg.device))
+        acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
+        enc, l1, l2, loss = encoder.forward(acts)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
