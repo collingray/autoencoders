@@ -1,7 +1,6 @@
-torch
 datasets
 sentencepiece
+torch
+tqdm
 transformer_lens
 wandb
-transformers
-pytest
