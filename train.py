@@ -2,12 +2,15 @@ import torch
 import wandb
 from autoencoder import *
 from buffer import *
+import time
 
 lr = 1e-4
-num_tokens = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
+num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
 batch_size = 32
 beta1 = 0.9
 beta2 = 0.99
+steps_per_report = 100
+steps_per_save = 10000
 
 wandb_project = "autoencoder"
 wandb_entity = "collingray"
@@ -18,8 +21,10 @@ buffer_cfg = ActivationsBufferConfig(
     layers=[0],
     dataset_name="roneneldan/TinyStories",
     dataset_split="train",
-    buffer_size=65536,
-    buffer_device="cpu"
+    buffer_size=2**20,
+    buffer_device="cpu",
+    offload_device="cpu",
+    circular_buffer=True,
 )
 buffer = ActivationsBuffer(buffer_cfg)
 
@@ -29,16 +34,26 @@ encoder = AutoEncoder(encoder_cfg)
 optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), foreach=False)
 
 try:
-    for i in range(num_tokens // batch_size):
+    prev_time = time.time()
+    for i in range(num_activations // batch_size):
         enc, l1, l2, loss = encoder.forward(buffer.next(batch=batch_size).to(encoder_cfg.device))
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-        if i % 100 == 0:
+        if i % steps_per_report == 0 and i > 0:
             print(f"Step {i}, l1_loss: {l1.item()}, l2_loss: {l2.item()}, total_loss: {loss.item()}")
-            wandb.log({"l1_loss": l1.item(), "l2_loss": l2.item(), "total_loss": loss.item()})
-            if i % 10000 == 0 and i > 0:
-                encoder.save(i // 1000)
+            wandb.log({
+                "l1_loss": l1.item(),
+                "l2_loss": l2.item(),
+                "total_loss": loss.item(),
+                "ms_per_act": 1000 * (time.time() - prev_time) / (batch_size * steps_per_report)
+            })
+
+            if i % steps_per_save == 0:
+                encoder.save(i // steps_per_save)
+
+            torch.cuda.empty_cache()
+            prev_time = time.time()
 finally:
     # Save the model
     encoder.save("final")

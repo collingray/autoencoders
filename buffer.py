@@ -19,8 +19,10 @@ class ActivationsBufferConfig:
             act_size=None,
             seed=None,
             device="cuda",
-            buffer_device=None,
             dtype=torch.bfloat16,
+            buffer_device=None,
+            offload_device=None,
+            circular_buffer=False,
     ):
         """
         :param model_name: the hf model name
@@ -36,8 +38,12 @@ class ActivationsBufferConfig:
         :param act_size: the size of the activations vectors. If None, it will use the size provided by the model's cfg
         :param seed: the seed to use for dataset shuffling and activation sampling
         :param device: the device to use for the model
-        :param buffer_device: the device to use for the buffer. If None, it will use the same device as the model
         :param dtype: the dtype to use for the buffer and model
+        :param buffer_device: the device to use for the buffer. If None, it will use the same device as the model
+        :param offload_device: the device to offload the model to when not generating activations. If None, offloading
+        is disabled. If using this, make sure to use a large enough buffer to avoid frequent offloading
+        :param circular_buffer: If True, the buffer will not perform and refreshes, and will instead rotate through the
+        initial buffer.
         """
 
         assert isinstance(layers, list) and len(layers) > 0, "layers must be a non-empty list of ints"
@@ -48,14 +54,16 @@ class ActivationsBufferConfig:
         self.act_names = [f"blocks.{layer}.{act_site}" for layer in layers]  # the tl keys to grab activations from todo
         self.dataset_split = dataset_split
         self.buffer_size = buffer_size
-        self.min_capacity = min_capacity
+        self.min_capacity = min_capacity if not circular_buffer else 0
         self.model_batch_size = model_batch_size
         self.samples_per_seq = samples_per_seq
         self.act_size = act_size
         self.seed = seed
         self.device = device
-        self.buffer_device = buffer_device or device
         self.dtype = dtype
+        self.buffer_device = buffer_device or device
+        self.offload_device = offload_device
+        self.circular_buffer = circular_buffer
         self.final_layer = max(layers)  # the final layer that needs to be run
 
 
@@ -115,6 +123,10 @@ class ActivationsBuffer:
         # shift the remaining activations to the start of the buffer
         self.buffer = torch.roll(self.buffer, -self.buffer_pointer, 0)
 
+        # if offloading is enabled, move the model to `cfg.device` before generating activations
+        if self.cfg.offload_device:
+            self.model.to(self.cfg.device)
+
         # fill the rest of the buffer with `buffer_pointer` new activations from the model
         while self.buffer_pointer > 0:
             # if we have less than a full `model_batch_size` left to get, use the remaining sequences
@@ -146,12 +158,21 @@ class ActivationsBuffer:
             # update the buffer pointer by the number of activations we just added
             self.buffer_pointer -= new_acts
 
+        # if offloading is enabled, move the model back to `cfg.offload_device`, and clear the cache
+        if self.cfg.offload_device:
+            self.model.to(self.cfg.offload_device)
+            torch.cuda.empty_cache()
+
         assert self.buffer_pointer == 0, "Buffer pointer should be 0 after refresh"
 
     @torch.no_grad()
     def next(self, batch: int = None):
+        # if this batch read would take us below the min_capacity, refresh the buffer (or reset if circular)
         if self.cfg.buffer_size - (self.buffer_pointer + (batch or 1)) < self.cfg.min_capacity:
-            self.refresh()
+            if not self.cfg.circular_buffer:
+                self.refresh()
+            else:
+                self.buffer_pointer = 0
 
         if batch is None:
             out = self.buffer[self.buffer_pointer]
