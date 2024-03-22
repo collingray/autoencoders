@@ -3,6 +3,7 @@ import wandb
 from autoencoder import *
 from buffer import *
 import time
+from tqdm import tqdm
 
 lr = 1e-4
 num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
@@ -35,13 +36,12 @@ optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), 
 
 try:
     prev_time = time.time()
-    for i in range(num_activations // batch_size):
+    for i in tqdm(range(num_activations // batch_size)):
         enc, l1, l2, loss = encoder.forward(buffer.next(batch=batch_size).to(encoder_cfg.device))
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
         if i % steps_per_report == 0 and i > 0:
-            print(f"Step {i}, l1_loss: {l1.item()}, l2_loss: {l2.item()}, total_loss: {loss.item()}")
             wandb.log({
                 "l1_loss": l1.item(),
                 "l2_loss": l2.item(),

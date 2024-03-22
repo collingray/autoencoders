@@ -2,6 +2,7 @@ import torch
 import datasets
 from transformer_lens import HookedTransformer
 from math import ceil
+from tqdm import tqdm
 
 
 class ActivationsBufferConfig:
@@ -23,6 +24,7 @@ class ActivationsBufferConfig:
             buffer_device=None,
             offload_device=None,
             circular_buffer=False,
+            refresh_progress=True,
     ):
         """
         :param model_name: the hf model name
@@ -44,6 +46,7 @@ class ActivationsBufferConfig:
         is disabled. If using this, make sure to use a large enough buffer to avoid frequent offloading
         :param circular_buffer: If True, the buffer will not perform and refreshes, and will instead rotate through the
         initial buffer.
+        :param refresh_progress: If True, a progress bar will be displayed when refreshing the buffer
         """
 
         assert isinstance(layers, list) and len(layers) > 0, "layers must be a non-empty list of ints"
@@ -64,6 +67,7 @@ class ActivationsBufferConfig:
         self.buffer_device = buffer_device or device
         self.offload_device = offload_device
         self.circular_buffer = circular_buffer
+        self.refresh_progress = refresh_progress
         self.final_layer = max(layers)  # the final layer that needs to be run
 
 
@@ -127,6 +131,10 @@ class ActivationsBuffer:
         if self.cfg.offload_device:
             self.model.to(self.cfg.device)
 
+        # start a progress bar if `refresh_progress` is enabled
+        if self.cfg.refresh_progress:
+            pbar = tqdm(total=self.buffer_pointer)
+
         # fill the rest of the buffer with `buffer_pointer` new activations from the model
         while self.buffer_pointer > 0:
             # if we have less than a full `model_batch_size` left to get, use the remaining sequences
@@ -157,6 +165,14 @@ class ActivationsBuffer:
 
             # update the buffer pointer by the number of activations we just added
             self.buffer_pointer -= new_acts
+
+            # update the progress bar
+            if self.cfg.refresh_progress:
+                pbar.update(new_acts)
+
+        # close the progress bar
+        if self.cfg.refresh_progress:
+            pbar.close()
 
         # if offloading is enabled, move the model back to `cfg.offload_device`, and clear the cache
         if self.cfg.offload_device:
