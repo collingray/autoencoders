@@ -3,6 +3,7 @@ import datasets
 from transformer_lens import HookedTransformer
 from math import ceil
 from tqdm import tqdm
+import gc
 
 
 class ActivationsBufferConfig:
@@ -177,6 +178,7 @@ class ActivationsBuffer:
 
             new_acts = min(acts.shape[0], self.buffer_pointer)  # the number of acts to write, capped by buffer_pointer
             self.buffer[write_pointer:write_pointer + acts.shape[0]].copy_(acts[:new_acts], non_blocking=True)
+            del acts
 
             # update the buffer pointer by the number of activations we just added
             self.buffer_pointer -= new_acts
@@ -196,6 +198,8 @@ class ActivationsBuffer:
         if self.cfg.offload_device:
             self.model.to(self.cfg.offload_device)
             torch.cuda.empty_cache()
+
+        gc.collect()
 
         assert self.buffer_pointer == 0, "Buffer pointer should be 0 after refresh"
 
