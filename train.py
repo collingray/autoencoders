@@ -5,7 +5,7 @@ from buffer import *
 
 lr = 1e-4
 num_tokens = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
-batch_size = 8
+batch_size = 32
 beta1 = 0.9
 beta2 = 0.99
 
@@ -29,10 +29,11 @@ try:
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-        if i > 0 and i % 1000 == 0:
+        if i % 100 == 0:
             print(f"Step {i}, l1_loss: {l1.item()}, l2_loss: {l2.item()}, total_loss: {loss.item()}")
             wandb.log({"l1_loss": l1.item(), "l2_loss": l2.item(), "total_loss": loss.item()})
-            encoder.save(i // 1000)
+            if i % 10000 == 0 and i > 0:
+                encoder.save(i // 1000)
 finally:
     # Save the model
     encoder.save("final")

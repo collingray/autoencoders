@@ -148,7 +148,6 @@ class ActivationsBuffer:
     @torch.no_grad()
     def next(self, batch: int = None):
         if self.cfg.buffer_size - (self.buffer_pointer + (batch or 1)) < self.cfg.min_capacity:
-            print("Refreshing the buffer!")
             self.refresh()
 
         if batch is None:
