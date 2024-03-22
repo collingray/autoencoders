@@ -82,7 +82,7 @@ class AutoEncoder(nn.Module):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
         l1, l2, l = self.__loss(x, reconstructed, encoded, self.cfg.lambda_reg)
-        return encoded, l
+        return encoded, l1, l2, l
 
     def encode(self, x):
         x = x - self.pre_encoder_bias

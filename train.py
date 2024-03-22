@@ -11,13 +11,11 @@ beta2 = 0.99
 
 wandb_project = "autoencoder"
 wandb_entity = "collingray"
+wandb.init(project=wandb_project, entity=wandb_entity)
 
-buffer_cfg = ActivationsBufferConfig(
-    model_name="mistralai/Mistral-7B-Instruct-v0.1",
-    layers=[0],
-    dataset_name="roneneldan/TinyStories",
-    dataset_split="train"
-)
+model = "mistralai/Mistral-7B-Instruct-v0.1"
+dataset = "roneneldan/TinyStories"
+buffer_cfg = ActivationsBufferConfig(model_name=model, layers=[0], dataset_name=dataset, dataset_split="train")
 buffer = ActivationsBuffer(buffer_cfg)
 
 encoder_cfg = AutoEncoderConfig(n_dim=14336, m_dim=14336 * 2)  # 14336*5 = 71680
@@ -26,8 +24,6 @@ encoder = AutoEncoder(encoder_cfg)
 optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), foreach=False)
 
 try:
-    wandb.init(project=wandb_project, entity=wandb_entity)
-
     for i in range(num_tokens // batch_size):
         enc, l1, l2, loss = encoder.forward(buffer.next(batch=batch_size))
         loss.backward()
