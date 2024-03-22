@@ -81,8 +81,8 @@ class AutoEncoder(nn.Module):
     def forward(self, x):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
-        loss = self.__loss(x, reconstructed, encoded, self.cfg.lambda_reg)
-        return encoded, loss
+        l1, l2, l = self.__loss(x, reconstructed, encoded, self.cfg.lambda_reg)
+        return encoded, l
 
     def encode(self, x):
         x = x - self.pre_encoder_bias
@@ -93,9 +93,9 @@ class AutoEncoder(nn.Module):
 
     @staticmethod
     def __loss(x, x_out, latent, lambda_reg):
-        l1_loss = lambda_reg * latent.abs().sum()  # L1 loss, promotes sparsity
-        l2_loss = torch.mean((x_out - x) ** 2)  # L2 loss, reconstruction loss
-        return l1_loss + l2_loss
+        l1 = lambda_reg * latent.abs().sum()  # L1 loss, promotes sparsity
+        l2 = torch.mean((x_out - x) ** 2)  # L2 loss, reconstruction loss
+        return l1, l2, l1 + l2
 
     def save(self, checkpoint):
         # save the model

@@ -1,65 +1,42 @@
 import torch
 import wandb
-from torch import optim
-from autoencoder import AutoEncoder
-from configs import *
+from autoencoder import *
+from buffer import *
 
-# Hyperparameters
-n = 10  # Dimension of the input
-m = 5  # Dimension of the hidden layer
-lambda_reg = 0.01  # Regularization strength
-learning_rate = 0.001  # Learning rate for the optimizer
-batch_size = 64  # Batch size for training
-epochs = 50  # Number of training epochs
-dataset_size = 1000  # Assuming we have 1000 samples
+lr = 1e-4
+num_tokens = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
+batch_size = 8
+beta1 = 0.9
+beta2 = 0.99
 
-# Sample synthetic dataset (just for demonstration purposes)
-dataset = torch.randn(dataset_size, n)
+wandb_project = "autoencoder"
+wandb_entity = "collingray"
 
-# DataLoader can be used to split the dataset into batches
-# For simplicity, we are skipping DataLoader here and processing the entire dataset at once
+buffer_cfg = ActivationsBufferConfig(
+    model_name="mistralai/Mistral-7B-Instruct-v0.1",
+    layers=[0],
+    dataset_name="roneneldan/TinyStories",
+    dataset_split="train"
+)
+buffer = ActivationsBuffer(buffer_cfg)
 
-# Model instantiation
-autoencoder = AutoEncoder(autoencoder_cfg)
+encoder_cfg = AutoEncoderConfig(n_dim=14336, m_dim=14336 * 2)  # 14336*5 = 71680
+encoder = AutoEncoder(encoder_cfg)
 
-# Optimizer setup
-optimizer = optim.Adam(autoencoder.parameters(), lr=learning_rate)
-
-checkpoint = 0
+optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), foreach=False)
 
 try:
-    # Initialize W&B project
-    wandb.init(project=training_cfg["wandb_project"], entity=training_cfg["wandb_entity"])
+    wandb.init(project=wandb_project, entity=wandb_entity)
 
-    # Training loop
-    for epoch in range(epochs):
-        for i in range(0, dataset_size, batch_size):
-            # Get the mini-batch
-            x_batch = dataset[i:i + batch_size]
-
-            # Forward pass
-            x_out, f = autoencoder(x_batch)
-
-            # Loss computation
-            loss = autoencoder.loss(x_batch, x_out, f, lambda_reg)
-
-            # Backward pass
-            optimizer.zero_grad()  # Clear previous gradients
-            loss.backward()  # Compute gradients of all variables wrt loss
-
-            # Gradient step
-            optimizer.step()  # Perform updates using calculated gradients
-
-        # Print loss for the epoch
-        print(f"Epoch {epoch + 1}/{epochs}, Loss: {loss.item()}")
-
-        # Log loss to W&B
-        wandb.log({"loss": loss.item()})
-
-        # Save model checkpoint
-        if (epoch + 1) % training_cfg["epochs_per_checkpoint"] == 0:
-            autoencoder.save(checkpoint)
-            checkpoint += 1
+    for i in range(num_tokens // batch_size):
+        enc, l1, l2, loss = encoder.forward(buffer.next(batch=batch_size))
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+        if i > 0 and i % 1000 == 0:
+            print(f"Step {i}, l1_loss: {l1.item()}, l2_loss: {l2.item()}, total_loss: {loss.item()}")
+            wandb.log({"l1_loss": l1.item(), "l2_loss": l2.item(), "total_loss": loss.item()})
+            encoder.save(i // 1000)
 finally:
     # Save the model
-    autoencoder.save(checkpoint)
+    encoder.save("final")
