@@ -71,6 +71,14 @@ class ActivationsBufferConfig:
         self.final_layer = max(layers)  # the final layer that needs to be run
 
 
+def repeat_iterator(iterator):
+    """
+    Repeat an iterator indefinitely
+    """
+    while True:
+        for item in iterator:
+            yield item
+
 class ActivationsBuffer:
     """
     A data buffer to store MLP activations for training the autoencoder.
@@ -91,8 +99,16 @@ class ActivationsBuffer:
         # pointer to the current position in the dataset
         self.dataset_pointer = 0
 
-        # load, shuffle, and flatten the dataset
-        self.dataset = datasets.load_dataset(cfg.dataset_name, split=cfg.dataset_split).shuffle(seed=cfg.seed).flatten_indices()
+        # load the dataset into a looping data loader
+        dataset = datasets.load_dataset(cfg.dataset_name, split=cfg.dataset_split)
+        data_loader = torch.utils.data.DataLoader(
+            dataset['text'],
+            batch_size=cfg.model_batch_size,
+            shuffle=True,
+            pin_memory=True,
+            num_workers=8
+        )
+        self.dataset = repeat_iterator(data_loader)
 
         # load the model into a HookedTransformer
         self.model = HookedTransformer.from_pretrained_no_processing(
@@ -145,17 +161,8 @@ class ActivationsBuffer:
 
         # fill the rest of the buffer with `buffer_pointer` new activations from the model
         while self.buffer_pointer > 0:
-            # if we have less than a full `model_batch_size` left to get, use the remaining sequences
-            batch_size = min(ceil(self.buffer_pointer/self.cfg.samples_per_seq), self.cfg.model_batch_size)
-
-            # get the next batch of text from the dataset (batch_size, seq_len)
-            seqs = self.dataset['text'][self.dataset_pointer:self.dataset_pointer + batch_size]
-
-            # update the dataset pointer
-            self.dataset_pointer = (self.dataset_pointer + batch_size) % len(self.dataset['text'])
-
             # run the seqs through the model to get the activations
-            out, cache = self.model.run_with_cache(seqs, stop_at_layer=self.cfg.final_layer+1,
+            out, cache = self.model.run_with_cache(next(self.dataset), stop_at_layer=self.cfg.final_layer+1,
                                                    names_filter=self.cfg.act_names)
 
             # clean up logits in order to free the graph memory
@@ -169,7 +176,7 @@ class ActivationsBuffer:
             write_pointer = self.cfg.buffer_size - self.buffer_pointer
 
             new_acts = min(acts.shape[0], self.buffer_pointer)  # the number of acts to write, capped by buffer_pointer
-            self.buffer[write_pointer:write_pointer + acts.shape[0]] = acts[:new_acts].clone()
+            self.buffer[write_pointer:write_pointer + acts.shape[0]].copy_(acts[:new_acts], non_blocking=True)
 
             # update the buffer pointer by the number of activations we just added
             self.buffer_pointer -= new_acts
@@ -181,6 +188,9 @@ class ActivationsBuffer:
         # close the progress bar
         if self.cfg.refresh_progress:
             pbar.close()
+
+        # sync the buffer to ensure async copies are complete
+        torch.cuda.synchronize()
 
         # if offloading is enabled, move the model back to `cfg.offload_device`, and clear the cache
         if self.cfg.offload_device:
