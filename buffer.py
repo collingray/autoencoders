@@ -94,14 +94,14 @@ class ActivationsBuffer:
 
         # load the dataset into a looping data loader
         dataset = datasets.load_dataset(cfg.dataset_name, split=cfg.dataset_split)
-        data_loader = torch.utils.data.DataLoader(
+        self.data_loader = torch.utils.data.DataLoader(
             dataset['text'],
             batch_size=cfg.model_batch_size,
             shuffle=True,
             pin_memory=True,
             num_workers=8
         )
-        self.dataset = iter(data_loader)
+        self.data_generator = iter(self.data_loader)
 
         # load the model into a HookedTransformer
         self.model = HookedTransformer.from_pretrained_no_processing(
@@ -154,8 +154,15 @@ class ActivationsBuffer:
 
         # fill the rest of the buffer with `buffer_pointer` new activations from the model
         while self.buffer_pointer > 0:
+            # get the next batch of seqs
+            try:
+                seqs = next(self.data_generator)
+            except StopIteration:
+                self.data_generator = iter(self.data_loader)
+                seqs = next(self.data_generator)
+
             # run the seqs through the model to get the activations
-            out, cache = self.model.run_with_cache(next(self.dataset), stop_at_layer=self.cfg.final_layer+1,
+            out, cache = self.model.run_with_cache(seqs, stop_at_layer=self.cfg.final_layer + 1,
                                                    names_filter=self.cfg.act_names)
 
             # clean up logits in order to free the graph memory
