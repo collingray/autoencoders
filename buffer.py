@@ -72,14 +72,6 @@ class ActivationsBufferConfig:
         self.final_layer = max(layers)  # the final layer that needs to be run
 
 
-def repeat_iterator(iterator):
-    """
-    Repeat an iterator indefinitely
-    """
-    while True:
-        for item in iterator:
-            yield item
-
 class ActivationsBuffer:
     """
     A data buffer to store MLP activations for training the autoencoder.
@@ -109,7 +101,7 @@ class ActivationsBuffer:
             pin_memory=True,
             num_workers=8
         )
-        self.dataset = repeat_iterator(data_loader)
+        self.dataset = iter(data_loader)
 
         # load the model into a HookedTransformer
         self.model = HookedTransformer.from_pretrained_no_processing(

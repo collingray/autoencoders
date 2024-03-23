@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 lr = 1e-4
 num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
-batch_size = 32
+batch_size = 128
 beta1 = 0.9
 beta2 = 0.99
 steps_per_report = 100
@@ -22,14 +22,16 @@ buffer_cfg = ActivationsBufferConfig(
     layers=[0],
     dataset_name="roneneldan/TinyStories",
     dataset_split="train",
-    buffer_size=2**20,
+    buffer_size=2**19,
     buffer_device="cpu",
     offload_device="cpu",
+    model_batch_size=8,
+    samples_per_seq=64,
     circular_buffer=True,
 )
 buffer = ActivationsBuffer(buffer_cfg)
 
-encoder_cfg = AutoEncoderConfig(n_dim=14336, m_dim=14336 * 2)  # 14336*5 = 71680
+encoder_cfg = AutoEncoderConfig(n_dim=14336, m_dim=14336 * 4)
 encoder = AutoEncoder(encoder_cfg)
 
 optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), foreach=False)
@@ -38,7 +40,7 @@ try:
     prev_time = time.time()
     for i in tqdm(range(num_activations // batch_size)):
         acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
-        enc, l1, l2, loss = encoder.forward(acts)
+        enc, l1, l2, loss = encoder(acts)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()

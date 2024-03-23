@@ -93,7 +93,7 @@ class AutoEncoder(nn.Module):
 
     @staticmethod
     def __loss(x, x_out, latent, lambda_reg):
-        l1 = lambda_reg * latent.abs().sum()  # L1 loss, promotes sparsity
+        l1 = lambda_reg * latent.float().abs().sum()  # L1 loss, promotes sparsity
         l2 = torch.mean((x_out - x) ** 2)  # L2 loss, reconstruction loss
         return l1, l2, l1 + l2
 
