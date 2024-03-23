@@ -205,7 +205,7 @@ class ActivationsBuffer:
     @torch.no_grad()
     def next(self, batch: int = None):
         # if this batch read would take us below the min_capacity, refresh the buffer (or reset if circular)
-        if self.cfg.buffer_size - (self.buffer_pointer + (batch or 1)) < self.cfg.min_capacity:
+        if self.will_refresh(batch):
             if not self.cfg.circular_buffer:
                 self.refresh()
             else:
@@ -219,3 +219,6 @@ class ActivationsBuffer:
         self.buffer_pointer += batch or 1
 
         return out
+
+    def will_refresh(self, batch: int = None):
+        return self.cfg.buffer_size - (self.buffer_pointer + (batch or 1)) < self.cfg.min_capacity

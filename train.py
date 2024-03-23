@@ -4,6 +4,7 @@ from autoencoder import *
 from buffer import *
 import time
 from tqdm import tqdm
+from utils import *
 
 lr = 1e-4
 num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
@@ -12,6 +13,9 @@ beta1 = 0.9
 beta2 = 0.99
 steps_per_report = 100
 steps_per_save = 10000
+
+primary_device = "cuda:0"
+offload_device = "cpu"
 
 wandb_project = "autoencoder"
 wandb_entity = "collingray"
@@ -23,15 +27,19 @@ buffer_cfg = ActivationsBufferConfig(
     dataset_name="roneneldan/TinyStories",
     dataset_split="train",
     buffer_size=2**19,
-    buffer_device="cpu",
-    offload_device="cpu",
+    device=primary_device,
+    buffer_device=offload_device,
+    offload_device=offload_device,
     model_batch_size=8,
     samples_per_seq=64,
-    circular_buffer=True,
 )
 buffer = ActivationsBuffer(buffer_cfg)
 
-encoder_cfg = AutoEncoderConfig(n_dim=14336, m_dim=14336 * 4)
+encoder_cfg = AutoEncoderConfig(
+    n_dim=14336,
+    m_dim=14336 * 4,
+    device=primary_device,
+)
 encoder = AutoEncoder(encoder_cfg)
 
 optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), foreach=False)
@@ -39,7 +47,18 @@ optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), 
 try:
     prev_time = time.time()
     for i in tqdm(range(num_activations // batch_size)):
-        acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
+        # If the buffer needs to be refreshed, offload the encoder and its optimizer to the offload device to free up
+        # memory on the primary device, which is needed by the buffer to load the next batch of activations.
+        if buffer.will_refresh(batch=batch_size):
+            encoder = encoder.to(offload_device)
+            optimizer_to(optimizer, offload_device)
+            torch.cuda.empty_cache()
+            acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
+            encoder = encoder.to(primary_device)
+            optimizer_to(optimizer, primary_device)
+        else:
+            acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
+
         enc, l1, l2, loss = encoder(acts)
         loss.backward()
         optimizer.step()
