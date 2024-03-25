@@ -117,7 +117,7 @@ class AutoEncoder(nn.Module):
                 self.neuron_firings[0] = 0
 
             self.num_passes[0] += x.shape[0]
-            self.neuron_firings[0] += (x > 0).int().sum(dim=0, keepdim=True)
+            self.neuron_firings[0] += (x > 0).sum(dim=0)
 
         return x
 

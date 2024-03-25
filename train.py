@@ -79,7 +79,8 @@ try:
         else:
             acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
 
-        enc, l1, l2, loss = encoder(acts)
+        # 0 in the second dimension since we are only using one layer
+        enc, l1, l2, loss = encoder(acts[:, 0, :])
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
