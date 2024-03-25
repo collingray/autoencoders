@@ -13,7 +13,7 @@ class AutoEncoderConfig:
             seed=None,
             device="cuda",
             dtype=torch.bfloat16,
-            lambda_reg=0.01,
+            lambda_reg=0.001,
             record_neuron_freqs=False,
             num_firing_buckets=10,
             firing_bucket_size=1000000,

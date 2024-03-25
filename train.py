@@ -10,7 +10,7 @@ from utils import *
 import argparse
 import gc
 
-lr = 1e-4
+lr = 1e-5
 num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
 batch_size = 8192
 beta1 = 0.9
@@ -42,7 +42,7 @@ buffer_cfg = ActivationsBufferConfig(
     act_site="hook_mlp_out",
     dataset_name="roneneldan/TinyStories",
     dataset_split="train",
-    buffer_size=2**19,
+    buffer_size=2**20,
     device=primary_device,
     buffer_device=offload_device,
     offload_device=offload_device,
@@ -56,6 +56,7 @@ encoder_cfg = AutoEncoderConfig(
     n_dim=n_dim,
     m_dim=m_dim,
     device=primary_device,
+    lambda_reg=1e-5,
     tied=True,
     record_neuron_freqs=True,
 )
@@ -93,9 +94,9 @@ try:
                 "total_loss": loss.item(),
                 "ms_per_act": 1000 * (time.time() - prev_time) / (batch_size * steps_per_report),
                 "% <bf (10M rol. avg.)": (freqs < base_frequency).sum().item()/m_dim,
-                "% <bf/10 (10M rol. avg.)": (freqs < base_frequency / 10).sum().item()/m_dim,
-                "% <bf/100 (10M rol. avg.)": (freqs < base_frequency / 100).sum().item()/m_dim,
-                "% <bf/1000 (10M rol. avg.)": (freqs < base_frequency / 1000).sum().item()/m_dim,
+                "% <bf/10 (10M rol. avg.)": (freqs < (base_frequency / 10)).sum().item()/m_dim,
+                "% <bf/100 (10M rol. avg.)": (freqs < (base_frequency / 100)).sum().item()/m_dim,
+                "% <bf/1000 (10M rol. avg.)": (freqs < (base_frequency / 1000)).sum().item()/m_dim,
                 "avg_neurons_fired": avg_fired,
             })
 
