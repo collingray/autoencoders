@@ -1,6 +1,7 @@
 import json
 import torch
 import torch.nn as nn
+from utils import TiedLinear
 
 
 class AutoEncoderConfig:
@@ -8,6 +9,7 @@ class AutoEncoderConfig:
             self,
             n_dim,
             m_dim,
+            tied=False,
             seed=None,
             device="cuda",
             lambda_reg=0.01,
@@ -18,6 +20,7 @@ class AutoEncoderConfig:
         """
         :param n_dim: the dimension of the input
         :param m_dim: the dimension of the hidden layer
+        :param tied: if True, the decoder weights are tied to the encoder weights
         :param seed: the seed to use for pytorch rng
         :param device: the device to use for the model
         :param lambda_reg: the regularization strength
@@ -28,6 +31,7 @@ class AutoEncoderConfig:
 
         self.n_dim = n_dim
         self.m_dim = m_dim
+        self.tied = tied
         self.seed = seed
         self.device = device
         self.lambda_reg = lambda_reg
@@ -35,7 +39,7 @@ class AutoEncoderConfig:
         self.name = name
         self.save_dir = save_dir
 
-
+# Custom JSON encoder and decoder for AutoEncoderConfig, as torch.dtype is not serializable by default
 class AutoEncoderConfigEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, AutoEncoderConfig):
@@ -76,13 +80,16 @@ class AutoEncoder(nn.Module):
         self.pre_activation_bias = nn.Parameter(torch.zeros(cfg.m_dim, device=cfg.device, dtype=cfg.dtype))
         self.relu = nn.ReLU()
         # decoder linear layer, goes from the hidden layer back to models embeddings
-        self.decoder = nn.Linear(cfg.m_dim, cfg.n_dim, bias=False, device=cfg.device, dtype=cfg.dtype)
+        if cfg.tied:
+            self.decoder = TiedLinear(self.encoder) # tied weights, uses same dtype/device as encoder
+        else:
+            self.decoder = nn.Linear(cfg.m_dim, cfg.n_dim, bias=False, device=cfg.device, dtype=cfg.dtype)
 
     def forward(self, x):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
-        l1, l2, l = self.__loss(x, reconstructed, encoded, self.cfg.lambda_reg)
-        return encoded, l1, l2, l
+        l1, l2, tl = self.__loss(x, reconstructed, encoded, self.cfg.lambda_reg)
+        return encoded, l1, l2, tl
 
     def encode(self, x):
         x = x - self.pre_encoder_bias
