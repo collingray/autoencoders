@@ -12,7 +12,7 @@ import gc
 
 lr = 1e-4
 num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
-batch_size = 512
+batch_size = 8192
 beta1 = 0.9
 beta2 = 0.99
 steps_per_report = 100
@@ -48,7 +48,7 @@ buffer_cfg = ActivationsBufferConfig(
     offload_device=offload_device,
     shuffle_buffer=True,
     model_batch_size=8,
-    samples_per_seq=64,
+    samples_per_seq=128,
 )
 buffer = ActivationsBuffer(buffer_cfg)
 
@@ -56,6 +56,8 @@ encoder_cfg = AutoEncoderConfig(
     n_dim=n_dim,
     m_dim=m_dim,
     device=primary_device,
+    tied=True,
+    record_neuron_freqs=True,
 )
 encoder = AutoEncoder(encoder_cfg)
 
