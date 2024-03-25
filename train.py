@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import wandb
 from autoencoder import *
@@ -5,6 +7,7 @@ from buffer import *
 import time
 from tqdm import tqdm
 from utils import *
+import argparse
 
 lr = 1e-4
 num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
@@ -19,7 +22,15 @@ offload_device = "cpu"
 
 wandb_project = "autoencoder"
 wandb_entity = "collingray"
-wandb.init(project=wandb_project, entity=wandb_entity)
+
+argparser = argparse.ArgumentParser()
+argparser.add_argument("--wb_name", type=Optional[str], default=None)
+argparser.add_argument("--wb_notes", type=Optional[str], default=None)
+args = argparser.parse_args()
+wb_name = args.wb_name
+wb_notes = args.wb_notes
+
+wandb.init(project=wandb_project, entity=wandb_entity, name=wb_name, notes=wb_notes)
 
 buffer_cfg = ActivationsBufferConfig(
     model_name="mistralai/Mistral-7B-Instruct-v0.1",
