@@ -39,11 +39,12 @@ class AutoEncoderConfig:
         self.name = name
         self.save_dir = save_dir
 
+
 # Custom JSON encoder and decoder for AutoEncoderConfig, as torch.dtype is not serializable by default
 class AutoEncoderConfigEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, AutoEncoderConfig):
-            o_dict = o.__dict__
+            o_dict = o.__dict__.copy()
             o_dict["dtype"] = o_dict["dtype"].__str__()[6:]
             return o_dict
 
