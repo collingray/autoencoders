@@ -1,2 +1,5 @@
 __pycache__/
 .idea/
+wandb/
+weights/
+scratchpad.ipynb
