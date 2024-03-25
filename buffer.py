@@ -1,7 +1,6 @@
 import torch
 import datasets
 from transformer_lens import HookedTransformer
-from math import ceil
 from tqdm import tqdm
 import gc
 

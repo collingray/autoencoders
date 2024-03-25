@@ -8,6 +8,7 @@ import time
 from tqdm import tqdm
 from utils import *
 import argparse
+import gc
 
 lr = 1e-4
 num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
@@ -67,6 +68,7 @@ try:
             acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
             encoder = encoder.to(primary_device)
             optimizer_to(optimizer, primary_device)
+            gc.collect()
         else:
             acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
 
