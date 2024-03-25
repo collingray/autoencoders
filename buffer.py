@@ -11,7 +11,7 @@ class ActivationsBufferConfig:
             model_name,
             layers,
             dataset_name,
-            act_site="mlp.hook_pre",
+            act_site,
             dataset_split=None,
             buffer_size=256,
             min_capacity=128,
@@ -24,7 +24,7 @@ class ActivationsBufferConfig:
             dtype=torch.bfloat16,
             buffer_device=None,
             offload_device=None,
-            refresh_progress=True,
+            refresh_progress=False,
     ):
         """
         :param model_name: the hf model name
@@ -37,7 +37,7 @@ class ActivationsBufferConfig:
         when to refresh the buffer
         :param model_batch_size: the batch size to use in the model when generating activations
         :param samples_per_seq: the number of activations to randomly sample from each sequence
-        :param act_size: the size of the activations vectors. If None, it will use the size provided by the model's cfg
+        :param act_size: the size of the activations vectors. If None, it will guess the size from the model's cfg
         :param shuffle_buffer: if True, the buffer will be shuffled after each refresh
         :param seed: the seed to use for dataset shuffling and activation sampling
         :param device: the device to use for the model
@@ -53,6 +53,7 @@ class ActivationsBufferConfig:
         self.model_name = model_name
         self.layers = layers
         self.dataset_name = dataset_name
+        self.act_site = act_site
         self.act_names = [f"blocks.{layer}.{act_site}" for layer in layers]  # the tl keys to grab activations from todo
         self.dataset_split = dataset_split
         self.buffer_size = buffer_size
@@ -111,7 +112,12 @@ class ActivationsBuffer:
 
         # if the act_size is not provided, use the size from the model's cfg
         if cfg.act_size is None:
-            self.cfg.act_size = self.model.cfg.d_mlp
+            if cfg.act_site[:3] == "mlp":
+                self.cfg.act_size = self.model.cfg.d_mlp
+            elif cfg.act_site == "hook_mlp_out":
+                self.cfg.act_size = self.model.cfg.d_model
+            else:
+                raise ValueError(f"Cannot determine act_size from act_site {cfg.act_site}, please provide it manually")
 
         # if the buffer is on the cpu, pin it to memory for faster transfer to the gpu
         pin_memory = cfg.buffer_device == "cpu"

@@ -12,8 +12,11 @@ class AutoEncoderConfig:
             tied=False,
             seed=None,
             device="cuda",
-            lambda_reg=0.01,
             dtype=torch.bfloat16,
+            lambda_reg=0.01,
+            record_neuron_freqs=False,
+            num_firing_buckets=10,
+            firing_bucket_size=1000000,
             name="autoencoder",
             save_dir="./weights",
     ):
@@ -23,8 +26,9 @@ class AutoEncoderConfig:
         :param tied: if True, the decoder weights are tied to the encoder weights
         :param seed: the seed to use for pytorch rng
         :param device: the device to use for the model
-        :param lambda_reg: the regularization strength
         :param dtype: the dtype to use for the model
+        :param lambda_reg: the regularization strength
+        :param record_neuron_freqs: if True, the number of times each neuron fires will be recorded
         :param name: the name to use when saving the model
         :param save_dir: the directory to save the model to
         """
@@ -34,8 +38,11 @@ class AutoEncoderConfig:
         self.tied = tied
         self.seed = seed
         self.device = device
-        self.lambda_reg = lambda_reg
         self.dtype = dtype
+        self.lambda_reg = lambda_reg
+        self.record_neuron_freqs = record_neuron_freqs
+        self.num_firing_buckets = num_firing_buckets
+        self.firing_bucket_size = firing_bucket_size
         self.name = name
         self.save_dir = save_dir
 
@@ -86,6 +93,11 @@ class AutoEncoder(nn.Module):
         else:
             self.decoder = nn.Linear(cfg.m_dim, cfg.n_dim, bias=False, device=cfg.device, dtype=cfg.dtype)
 
+        if cfg.record_neuron_freqs:
+            # Bucketed rolling avg. for memory efficiency
+            self.num_passes = torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32)
+            self.neuron_firings = torch.zeros(cfg.num_firing_buckets, cfg.m_dim, device=cfg.device, dtype=torch.int32)
+
     def forward(self, x):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
@@ -94,16 +106,44 @@ class AutoEncoder(nn.Module):
 
     def encode(self, x):
         x = x - self.pre_encoder_bias
-        return self.relu(self.encoder(x) + self.pre_activation_bias)
+        x = self.relu(self.encoder(x) + self.pre_activation_bias)
+
+        if self.cfg.record_neuron_freqs:
+            if self.num_passes[0] >= self.cfg.firing_bucket_size:
+                # If we've exceeded the bucket size, roll the data and reset the first bucket
+                self.num_passes = torch.roll(self.num_passes, 1, 0)
+                self.neuron_firings = torch.roll(self.neuron_firings, 1, 0)
+                self.num_passes[0] = 0
+                self.neuron_firings[0] = 0
+
+            self.num_passes[0] += x.shape[0]
+            self.neuron_firings[0] += (x > 0).int().sum(dim=0)
+
+        return x
 
     def decode(self, x):
         return self.decoder(x) + self.pre_encoder_bias
 
     @staticmethod
     def __loss(x, x_out, latent, lambda_reg):
-        l1 = lambda_reg * latent.float().abs().sum()  # L1 loss, promotes sparsity
-        l2 = torch.mean((x_out - x) ** 2)  # L2 loss, reconstruction loss
+        l1 = lambda_reg * latent.float().abs().sum().item()  # L1 loss, promotes sparsity
+        l2 = torch.mean((x_out - x) ** 2).item()  # L2 loss, reconstruction loss
         return l1, l2, l1 + l2
+
+    def get_firing_data(self):
+        """
+        Get data on the firing of different neurons in the hidden layer
+        :return: A tuple containing a tensor of the frequency with which each neuron fires and the average number of
+        neurons that fired per pass
+        """
+
+        firings = self.neuron_firings.sum(dim=0).float()
+        passes = self.num_passes.sum().item()
+
+        freqs = firings / passes
+        avg_fired = firings.sum().item() / passes
+
+        return freqs, avg_fired
 
     def save(self, checkpoint):
         # save the model

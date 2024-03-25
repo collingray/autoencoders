@@ -12,11 +12,14 @@ import gc
 
 lr = 1e-4
 num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
-batch_size = 128
+batch_size = 512
 beta1 = 0.9
 beta2 = 0.99
 steps_per_report = 100
 steps_per_save = 10000
+n_dim = 4096
+m_dim = n_dim * 8
+base_frequency = 1 / m_dim
 
 primary_device = "cuda:0"
 offload_device = "cpu"
@@ -36,20 +39,22 @@ wandb.init(project=wandb_project, entity=wandb_entity, name=wb_name, notes=wb_no
 buffer_cfg = ActivationsBufferConfig(
     model_name="mistralai/Mistral-7B-Instruct-v0.1",
     layers=[0],
+    act_site="hook_mlp_out",
     dataset_name="roneneldan/TinyStories",
     dataset_split="train",
     buffer_size=2**19,
     device=primary_device,
     buffer_device=offload_device,
     offload_device=offload_device,
+    shuffle_buffer=True,
     model_batch_size=8,
     samples_per_seq=64,
 )
 buffer = ActivationsBuffer(buffer_cfg)
 
 encoder_cfg = AutoEncoderConfig(
-    n_dim=14336,
-    m_dim=14336 * 4,
+    n_dim=n_dim,
+    m_dim=m_dim,
     device=primary_device,
 )
 encoder = AutoEncoder(encoder_cfg)
@@ -77,11 +82,18 @@ try:
         optimizer.step()
         optimizer.zero_grad()
         if i % steps_per_report == 0 and i > 0:
+            freqs, avg_fired = encoder.get_firing_data()
+
             wandb.log({
                 "l1_loss": l1.item(),
                 "l2_loss": l2.item(),
                 "total_loss": loss.item(),
-                "ms_per_act": 1000 * (time.time() - prev_time) / (batch_size * steps_per_report)
+                "ms_per_act": 1000 * (time.time() - prev_time) / (batch_size * steps_per_report),
+                "% <bf (10M rol. avg.)": (freqs < base_frequency).sum().item()/m_dim,
+                "% <bf/10 (10M rol. avg.)": (freqs < base_frequency / 10).sum().item()/m_dim,
+                "% <bf/100 (10M rol. avg.)": (freqs < base_frequency / 100).sum().item()/m_dim,
+                "% <bf/1000 (10M rol. avg.)": (freqs < base_frequency / 1000).sum().item()/m_dim,
+                "avg_neurons_fired": avg_fired,
             })
 
             if i % steps_per_save == 0:
