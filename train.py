@@ -66,6 +66,17 @@ encoder_cfg = AutoEncoderConfig(
 )
 encoder = AutoEncoder(encoder_cfg)
 
+wandb.config.update({
+    "max_lr": lr,
+    "num_activations": num_activations,
+    "batch_size": batch_size,
+    "beta1": beta1,
+    "beta2": beta2,
+    "perform_offloading": perform_offloading,
+    "encoder": encoder_cfg.__dict__,
+    "buffer": buffer_cfg.__dict__,
+})
+
 optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), foreach=False)
 scheduler = torch.optim.lr_scheduler.OneCycleLR(
     optimizer,
@@ -110,6 +121,7 @@ try:
                 "% <bf/100 (10M rol. avg.)": (freqs < (base_frequency / 100)).sum().item() / m_dim,
                 "% <bf/1000 (10M rol. avg.)": (freqs < (base_frequency / 1000)).sum().item() / m_dim,
                 "avg_neurons_fired": avg_fired,
+                "lr": scheduler.get_last_lr()[0],
             })
 
             if i % steps_per_save == 0:
