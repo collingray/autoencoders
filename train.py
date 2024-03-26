@@ -20,6 +20,9 @@ steps_per_save = 10000
 n_dim = 4096
 m_dim = n_dim * 8
 base_frequency = 1 / m_dim
+# To be used when gpu memory is tight, shuffles the encoder and buffer model back and forth from gpu to cpu to limit
+# peak gpu memory usage
+perform_offloading = False
 
 primary_device = "cuda:0"
 offload_device = "cpu"
@@ -45,11 +48,11 @@ buffer_cfg = ActivationsBufferConfig(
     buffer_size=2 ** 20,
     device=primary_device,
     buffer_device=offload_device,
-    offload_device=offload_device,
+    offload_device=offload_device if perform_offloading else None,
     shuffle_buffer=True,
     model_batch_size=8,
     samples_per_seq=None,
-    max_seq_length=1024,
+    max_seq_length=2048,
 )
 buffer = ActivationsBuffer(buffer_cfg)
 
@@ -58,7 +61,7 @@ encoder_cfg = AutoEncoderConfig(
     m_dim=m_dim,
     device=primary_device,
     lambda_reg=1e-8,
-    tied=True,
+    tied=False,
     record_neuron_freqs=True,
 )
 encoder = AutoEncoder(encoder_cfg)
@@ -68,15 +71,16 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(
     optimizer,
     max_lr=lr,
     total_steps=num_activations // batch_size,
-    pct_start=0.05
+    pct_start=0.1
 )
 
 try:
     prev_time = time.time()
     for i in tqdm(range(num_activations // batch_size)):
-        # If the buffer needs to be refreshed, offload the encoder and its optimizer to the offload device to free up
-        # memory on the primary device, which is needed by the buffer to load the next batch of activations.
-        if buffer.will_refresh(batch=batch_size):
+        # If offloading is enabled and the buffer needs to be refreshed, offload the encoder and its optimizer to the
+        # offload device to free up memory on the primary device, which is needed by the buffer to load the next batch
+        # of activations.
+        if perform_offloading and buffer.will_refresh(batch=batch_size):
             encoder = encoder.to(offload_device)
             optimizer_to(optimizer, offload_device)
             torch.cuda.empty_cache()
@@ -109,7 +113,7 @@ try:
             })
 
             if i % steps_per_save == 0:
-                encoder.save(i // steps_per_save)
+                encoder.save("chk")
 
             torch.cuda.empty_cache()
             prev_time = time.time()

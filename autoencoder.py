@@ -146,12 +146,10 @@ class AutoEncoder(nn.Module):
         return freqs, avg_fired
 
     def save(self, checkpoint):
-        # save the model
         filename = f"{self.cfg.name}_{checkpoint}"
         torch.save(self.state_dict(), f"{self.cfg.save_dir}/{filename}.pt")
         with open(f"{self.cfg.save_dir}/{self.cfg.name}_cfg.json", "w") as f:
             json.dump(self.cfg, f, cls=AutoEncoderConfigEncoder)
-        print(f"Saved model to {self.cfg.save_dir}/{filename}.pt")
 
     @classmethod
     def load(cls, name, checkpoint, save_dir="./weights"):
