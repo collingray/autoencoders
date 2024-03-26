@@ -48,7 +48,8 @@ buffer_cfg = ActivationsBufferConfig(
     offload_device=offload_device,
     shuffle_buffer=True,
     model_batch_size=8,
-    samples_per_seq=128,
+    samples_per_seq=None,
+    max_seq_length=1024,
 )
 buffer = ActivationsBuffer(buffer_cfg)
 

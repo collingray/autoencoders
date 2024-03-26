@@ -17,6 +17,7 @@ class ActivationsBufferConfig:
             min_capacity=128,
             model_batch_size=8,
             samples_per_seq=16,
+            max_seq_length=None,
             act_size=None,
             shuffle_buffer=False,
             seed=None,
@@ -36,7 +37,10 @@ class ActivationsBufferConfig:
         :param min_capacity: the minimum guaranteed capacity of the buffer, in number of activations, used to determine
         when to refresh the buffer
         :param model_batch_size: the batch size to use in the model when generating activations
-        :param samples_per_seq: the number of activations to randomly sample from each sequence
+        :param samples_per_seq: the number of activations to randomly sample from each sequence. If None, all
+        activations will be used
+        :param max_seq_length: the maximum sequence length to use when generating activations. If None, the sequences
+        will not be truncated
         :param act_size: the size of the activations vectors. If None, it will guess the size from the model's cfg
         :param shuffle_buffer: if True, the buffer will be shuffled after each refresh
         :param seed: the seed to use for dataset shuffling and activation sampling
@@ -60,6 +64,7 @@ class ActivationsBufferConfig:
         self.min_capacity = min_capacity
         self.model_batch_size = model_batch_size
         self.samples_per_seq = samples_per_seq
+        self.max_seq_length = max_seq_length
         self.act_size = act_size
         self.shuffle_buffer = shuffle_buffer
         self.seed = seed
@@ -162,8 +167,13 @@ class ActivationsBuffer:
             try:
                 seqs = next(self.data_generator)
             except StopIteration:
+                print("Data loader exhausted, reloading...")
                 self.data_generator = iter(self.data_loader)
                 seqs = next(self.data_generator)
+
+            if self.cfg.max_seq_length:
+                for i in range(len(seqs)):
+                    seqs[i] = seqs[i][:self.cfg.max_seq_length]
 
             # run the seqs through the model to get the activations
             out, cache = self.model.run_with_cache(seqs, stop_at_layer=self.cfg.final_layer + 1,
@@ -176,7 +186,11 @@ class ActivationsBuffer:
             # store the activations in the buffer
             acts = torch.stack([cache[name] for name in self.cfg.act_names], dim=-2)
             # (batch, pos, layers, act_size) -> (batch*samples_per_seq, layers, act_size)
-            acts = acts[:, torch.randperm(acts.shape[-3])[:self.cfg.samples_per_seq]].flatten(0, 1)
+            if self.cfg.samples_per_seq:
+                acts = acts[:, torch.randperm(acts.shape[-3])[:self.cfg.samples_per_seq]].flatten(0, 1)
+            else:
+                acts = acts.flatten(0, 1)
+
             write_pointer = self.cfg.buffer_size - self.buffer_pointer
 
             new_acts = min(acts.shape[0], self.buffer_pointer)  # the number of acts to write, capped by buffer_pointer
