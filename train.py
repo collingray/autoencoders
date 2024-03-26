@@ -10,8 +10,8 @@ from utils import *
 import argparse
 import gc
 
-lr = 1e-5
-num_activations = int(2e10)  # total number of tokens to train on, the dataset will wrap around as needed
+lr = 1e-4
+num_activations = int(2e9)  # total number of tokens to train on, the dataset will wrap around as needed
 batch_size = 8192
 beta1 = 0.9
 beta2 = 0.99
@@ -42,7 +42,7 @@ buffer_cfg = ActivationsBufferConfig(
     act_site="hook_mlp_out",
     dataset_name="roneneldan/TinyStories",
     dataset_split="train",
-    buffer_size=2**20,
+    buffer_size=2 ** 20,
     device=primary_device,
     buffer_device=offload_device,
     offload_device=offload_device,
@@ -56,13 +56,19 @@ encoder_cfg = AutoEncoderConfig(
     n_dim=n_dim,
     m_dim=m_dim,
     device=primary_device,
-    lambda_reg=1e-5,
+    lambda_reg=1e-8,
     tied=True,
     record_neuron_freqs=True,
 )
 encoder = AutoEncoder(encoder_cfg)
 
 optimizer = torch.optim.Adam(encoder.parameters(), lr=lr, betas=(beta1, beta2), foreach=False)
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=lr,
+    total_steps=num_activations // batch_size,
+    pct_start=0.05
+)
 
 try:
     prev_time = time.time()
@@ -84,6 +90,7 @@ try:
         enc, l1, l2, loss = encoder(acts[:, 0, :])
         loss.backward()
         optimizer.step()
+        scheduler.step()
         optimizer.zero_grad()
         if i % steps_per_report == 0 and i > 0:
             freqs, avg_fired = encoder.get_firing_data()
@@ -93,10 +100,10 @@ try:
                 "l2_loss": l2.item(),
                 "total_loss": loss.item(),
                 "ms_per_act": 1000 * (time.time() - prev_time) / (batch_size * steps_per_report),
-                "% <bf (10M rol. avg.)": (freqs < base_frequency).sum().item()/m_dim,
-                "% <bf/10 (10M rol. avg.)": (freqs < (base_frequency / 10)).sum().item()/m_dim,
-                "% <bf/100 (10M rol. avg.)": (freqs < (base_frequency / 100)).sum().item()/m_dim,
-                "% <bf/1000 (10M rol. avg.)": (freqs < (base_frequency / 1000)).sum().item()/m_dim,
+                "% <bf (10M rol. avg.)": (freqs < base_frequency).sum().item() / m_dim,
+                "% <bf/10 (10M rol. avg.)": (freqs < (base_frequency / 10)).sum().item() / m_dim,
+                "% <bf/100 (10M rol. avg.)": (freqs < (base_frequency / 100)).sum().item() / m_dim,
+                "% <bf/1000 (10M rol. avg.)": (freqs < (base_frequency / 1000)).sum().item() / m_dim,
                 "avg_neurons_fired": avg_fired,
             })
 
