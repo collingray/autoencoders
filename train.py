@@ -13,14 +13,13 @@ import gc
 lr = 1e-4
 num_activations = int(2e9)  # total number of tokens to train on, the dataset will wrap around as needed
 batch_size = 8192
-beta1 = 0.9
-beta2 = 0.99
+beta1 = 0
+beta2 = 0.9999
 steps_per_report = 100
 steps_per_save = 10000
-expansion = 8
+expansion = 4
 n_dim = 4096
 m_dim = n_dim * expansion
-base_frequency = 1 / m_dim
 # To be used when gpu memory is tight, shuffles the encoder and buffer model back and forth from gpu to cpu to limit
 # peak gpu memory usage
 perform_offloading = False
@@ -51,7 +50,7 @@ buffer_cfg = ActivationsBufferConfig(
     buffer_device=offload_device,
     offload_device=offload_device if perform_offloading else None,
     shuffle_buffer=True,
-    model_batch_size=8,
+    model_batch_size=16,
     samples_per_seq=None,
     max_seq_length=2048,
 )
@@ -61,7 +60,7 @@ encoder_cfg = AutoEncoderConfig(
     n_dim=n_dim,
     m_dim=m_dim,
     device=primary_device,
-    lambda_reg=1e-4,
+    lambda_reg=1e-3,
     tied=False,
     record_neuron_freqs=True,
 )
@@ -119,7 +118,7 @@ try:
                 "ms_per_act": 1000 * (time.time() - prev_time) / (batch_size * steps_per_report),
                 "avg_neurons_fired": avg_fired,
                 "lr": scheduler.get_last_lr()[0],
-                "feature_density": wandb.Histogram(freqs.log10()),
+                "feature_density": wandb.Histogram(freqs.log10().nan_to_num(neginf=-10).cpu()),
             })
 
             if i % steps_per_save == 0:
