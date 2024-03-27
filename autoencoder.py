@@ -125,9 +125,9 @@ class AutoEncoder(nn.Module):
         return self.decoder(x) + self.pre_encoder_bias
 
     def loss(self, x, x_out, latent, lambda_reg):
-        l1 = self.normalized_l1(x, latent)
+        l1 = lambda_reg * self.normalized_l1(x, latent)
         mse = self.normalized_reconstruction_mse(x, x_out)
-        total = (lambda_reg * l1) + mse
+        total = l1 + mse
 
         return total, l1, mse
 

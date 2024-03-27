@@ -17,8 +17,9 @@ beta1 = 0.9
 beta2 = 0.99
 steps_per_report = 100
 steps_per_save = 10000
+expansion = 8
 n_dim = 4096
-m_dim = n_dim * 8
+m_dim = n_dim * expansion
 base_frequency = 1 / m_dim
 # To be used when gpu memory is tight, shuffles the encoder and buffer model back and forth from gpu to cpu to limit
 # peak gpu memory usage
