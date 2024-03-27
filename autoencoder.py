@@ -101,8 +101,8 @@ class AutoEncoder(nn.Module):
     def forward(self, x):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
-        l1, l2, tl = self.__loss(x, reconstructed, encoded, self.cfg.lambda_reg)
-        return encoded, l1, l2, tl
+        loss, l1, mse = self.loss(x, reconstructed, encoded, self.cfg.lambda_reg)
+        return encoded, loss, l1, mse
 
     def encode(self, x):
         x = x - self.pre_encoder_bias
@@ -124,11 +124,26 @@ class AutoEncoder(nn.Module):
     def decode(self, x):
         return self.decoder(x) + self.pre_encoder_bias
 
+    def loss(self, x, x_out, latent, lambda_reg):
+        l1 = self.normalized_l1(x, latent)
+        mse = self.normalized_reconstruction_mse(x, x_out)
+        total = (lambda_reg * l1) + mse
+
+        return total, l1, mse
+
     @staticmethod
-    def __loss(x, x_out, latent, lambda_reg):
-        l1 = lambda_reg * latent.float().abs().sum()  # L1 loss, promotes sparsity
-        l2 = torch.mean((x_out - x) ** 2)  # L2 loss, reconstruction loss
-        return l1, l2, l1 + l2
+    def normalized_reconstruction_mse(x, recons):
+        """
+        The MSE between the input and its reconstruction, normalized by the mean square of the input
+        """
+        return (((x - recons) ** 2).mean(dim=1) / (x ** 2).mean(dim=1)).mean()
+
+    @staticmethod
+    def normalized_l1(x, latent):
+        """
+        The L1 norm of the latent representation, normalized by the L2 norm of the input
+        """
+        return (latent.norm(dim=1, p=1) / x.norm(dim=1, p=2)).mean()
 
     def get_firing_data(self):
         """

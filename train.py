@@ -60,7 +60,7 @@ encoder_cfg = AutoEncoderConfig(
     n_dim=n_dim,
     m_dim=m_dim,
     device=primary_device,
-    lambda_reg=1e-8,
+    lambda_reg=1e-4,
     tied=False,
     record_neuron_freqs=True,
 )
@@ -103,7 +103,7 @@ try:
             acts = buffer.next(batch=batch_size).to(encoder_cfg.device, non_blocking=True)
 
         # 0 in the second dimension since we are only using one layer
-        enc, l1, l2, loss = encoder(acts[:, 0, :])
+        enc, loss, l1, mse = encoder(acts[:, 0, :])
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -112,8 +112,8 @@ try:
             freqs, avg_fired = encoder.get_firing_data()
 
             wandb.log({
-                "l1_loss": l1.item(),
-                "l2_loss": l2.item(),
+                "l1": l1.item(),
+                "mse": mse.item(),
                 "total_loss": loss.item(),
                 "ms_per_act": 1000 * (time.time() - prev_time) / (batch_size * steps_per_report),
                 "% <bf (10M rol. avg.)": (freqs < base_frequency).sum().item() / m_dim,
