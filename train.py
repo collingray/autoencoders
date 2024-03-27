@@ -117,12 +117,9 @@ try:
                 "mse": mse.item(),
                 "total_loss": loss.item(),
                 "ms_per_act": 1000 * (time.time() - prev_time) / (batch_size * steps_per_report),
-                "% <bf (10M rol. avg.)": (freqs < base_frequency).sum().item() / m_dim,
-                "% <bf/10 (10M rol. avg.)": (freqs < (base_frequency / 10)).sum().item() / m_dim,
-                "% <bf/100 (10M rol. avg.)": (freqs < (base_frequency / 100)).sum().item() / m_dim,
-                "% <bf/1000 (10M rol. avg.)": (freqs < (base_frequency / 1000)).sum().item() / m_dim,
                 "avg_neurons_fired": avg_fired,
                 "lr": scheduler.get_last_lr()[0],
+                "feature_density": wandb.Histogram(freqs.log10()),
             })
 
             if i % steps_per_save == 0:
