@@ -19,6 +19,7 @@ class AutoEncoderConfig:
             firing_bucket_size=1000000,
             name="autoencoder",
             save_dir="./weights",
+            **kwargs
     ):
         """
         :param n_dim: the dimension of the input
@@ -103,8 +104,8 @@ class AutoEncoder(nn.Module):
             self.neuron_firings = torch.zeros(cfg.num_firing_buckets, cfg.m_dim, device=cfg.device, dtype=torch.int32)
 
         # mappings for using sae-vis
-        self.W_enc = self.encoder.weight
-        self.W_dec = self.decoder.weight
+        self.W_enc = self.encoder.weight.T
+        self.W_dec = self.decoder.weight.T
         self.b_enc = self.pre_activation_bias
         self.b_dec = self.pre_encoder_bias
 
