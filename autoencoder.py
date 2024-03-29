@@ -46,6 +46,10 @@ class AutoEncoderConfig:
         self.name = name
         self.save_dir = save_dir
 
+        # mapping for using sae-vis
+        self.d_mlp = n_dim
+        self.dict_mult = m_dim // n_dim
+
 
 # Custom JSON encoder and decoder for AutoEncoderConfig, as torch.dtype is not serializable by default
 class AutoEncoderConfigEncoder(json.JSONEncoder):
@@ -89,7 +93,7 @@ class AutoEncoder(nn.Module):
         self.relu = nn.ReLU()
         # decoder linear layer, goes from the hidden layer back to models embeddings
         if cfg.tied:
-            self.decoder = TiedLinear(self.encoder) # tied weights, uses same dtype/device as encoder
+            self.decoder = TiedLinear(self.encoder)  # tied weights, uses same dtype/device as encoder
         else:
             self.decoder = nn.Linear(cfg.m_dim, cfg.n_dim, bias=False, device=cfg.device, dtype=cfg.dtype)
 
@@ -97,6 +101,12 @@ class AutoEncoder(nn.Module):
             # Bucketed rolling avg. for memory efficiency
             self.num_passes = torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32)
             self.neuron_firings = torch.zeros(cfg.num_firing_buckets, cfg.m_dim, device=cfg.device, dtype=torch.int32)
+
+        # mappings for using sae-vis
+        self.W_enc = self.encoder.weight
+        self.W_dec = self.decoder.weight
+        self.b_enc = self.pre_activation_bias
+        self.b_dec = self.pre_encoder_bias
 
     def forward(self, x):
         encoded = self.encode(x)
