@@ -103,12 +103,6 @@ class AutoEncoder(nn.Module):
             self.num_passes = torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32)
             self.neuron_firings = torch.zeros(cfg.num_firing_buckets, cfg.m_dim, device=cfg.device, dtype=torch.int32)
 
-        # mappings for using sae-vis
-        self.W_enc = self.encoder.weight.T
-        self.W_dec = self.decoder.weight.T
-        self.b_enc = self.pre_activation_bias
-        self.b_dec = self.pre_encoder_bias
-
     def forward(self, x):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
@@ -141,6 +135,23 @@ class AutoEncoder(nn.Module):
         total = l1 + mse
 
         return total, l1, mse
+
+    # Mappings for using SAE-Vis
+    @property
+    def W_enc(self):
+        return self.encoder.weight.T
+
+    @property
+    def W_dec(self):
+        return self.decoder.weight.T
+
+    @property
+    def b_enc(self):
+        return self.pre_activation_bias
+
+    @property
+    def b_dec(self):
+        return self.pre_encoder_bias
 
     @staticmethod
     def normalized_reconstruction_mse(x, recons):
