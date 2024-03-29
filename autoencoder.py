@@ -47,8 +47,8 @@ class AutoEncoderConfig:
         self.save_dir = save_dir
 
         # mapping for using sae-vis
-        self.d_mlp = n_dim
-        self.dict_mult = m_dim // n_dim
+        self.d_in = n_dim
+        self.d_hidden = m_dim
 
 
 # Custom JSON encoder and decoder for AutoEncoderConfig, as torch.dtype is not serializable by default

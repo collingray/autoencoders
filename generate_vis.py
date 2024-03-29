@@ -7,7 +7,7 @@ from autoencoder import AutoEncoder
 torch.set_grad_enabled(False)
 
 # Load in the data
-data = load_dataset("roneneldan/TinyStories", split="train")["text"][:100000].shuffle(42)
+data = load_dataset("roneneldan/TinyStories", split="train").shuffle(42)["text"][:100000]
 
 # Load in the model
 model = HookedTransformer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1", dtype="bfloat16")
