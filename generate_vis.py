@@ -7,28 +7,27 @@ from autoencoder import AutoEncoder
 torch.set_grad_enabled(False)
 
 # Load in the data
-data = load_dataset("roneneldan/TinyStories", split="train")
+data = load_dataset("roneneldan/TinyStories", split="train")["text"][:100000].shuffle(42)
 
 # Load in the model
-model = HookedTransformer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1", hook_layers=[0])
+model = HookedTransformer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1", dtype="bfloat16")
 
 # Load in the AutoEncoder
 ae = AutoEncoder.load(name="autoencoder", checkpoint="final")
 
 # Tokenize the data
-tokens = model.to_tokens(data["text"])
+tokens = model.to_tokens(data)[:, :128]
 
 print("Tokens are of shape:", tokens.shape)
 
 sae_vis_config = SaeVisConfig(
     hook_point="blocks.0.hook_mlp_out",
-    features=range(64),
-    batch_size=2048,
+    batch_size=32,
     verbose=True,
 )
 
 # Generate the visualization data
-sae_vis_data = SaeVisData(
+sae_vis_data = SaeVisData.create(
     model=model,
     encoder=ae,
     tokens=tokens,
