@@ -1,5 +1,5 @@
 import torch
-from transformer_lens import HookedTransformer, utils
+from transformer_lens import HookedTransformer
 from datasets import load_dataset
 from sae_vis import SaeVisData, SaeVisConfig
 from autoencoder import AutoEncoder
