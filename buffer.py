@@ -167,8 +167,8 @@ class ActivationsBuffer:
             try:
                 seqs = next(self.data_generator)
             except StopIteration:
-                print("Data loader exhausted, reloading...")
-                self.data_generator = iter(self.data_loader)
+                print("Data generator exhausted, resetting...")
+                self.reset_dataset()
                 seqs = next(self.data_generator)
 
             if self.cfg.max_seq_length:
@@ -238,6 +238,12 @@ class ActivationsBuffer:
         self.buffer_pointer += batch or 1
 
         return out
+
+    def reset_dataset(self):
+        """
+        Reset the buffer to the beginning of the dataset without reshuffling.
+        """
+        self.data_generator = iter(self.data_loader)
 
     def will_refresh(self, batch: int = None):
         return self.cfg.buffer_size - (self.buffer_pointer + (batch or 1)) < self.cfg.min_capacity
