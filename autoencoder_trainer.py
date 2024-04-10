@@ -1,15 +1,11 @@
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional
 
-import torch
+import torch.optim.lr_scheduler
 import wandb
+
 from autoencoder import *
-from buffer import *
-import time
-from tqdm import tqdm
 from utils import *
-import argparse
-import gc
 
 
 @dataclass
@@ -34,8 +30,10 @@ class AutoEncoderTrainerConfig:
     warmup_percent: float
     wb_project: str
     wb_entity: str
+    wb_name: Optional[str] = None
     wb_group: Optional[str] = None
     wb_config: Optional[dict] = None
+    steps_per_report: int = 100
 
 
 class AutoEncoderTrainer:
@@ -45,6 +43,9 @@ class AutoEncoderTrainer:
     """
 
     def __init__(self, encoder_cfg: AutoEncoderConfig, trainer_cfg: AutoEncoderTrainerConfig):
+        self.cfg = trainer_cfg
+        self.steps = 0
+
         self.encoder = AutoEncoder(encoder_cfg)
 
         self.optimizer = torch.optim.Adam(
@@ -64,18 +65,22 @@ class AutoEncoderTrainer:
         wandb.init(
             project=trainer_cfg.wb_project,
             entity=trainer_cfg.wb_entity,
+            name=trainer_cfg.wb_name,
             group=trainer_cfg.wb_group,
-            config=trainer_cfg.wb_config
+            config=trainer_cfg.wb_config,
+            settings=wandb.Settings(disable_job_creation=True)
         )
 
-    def train_on(self, acts, report=False):
+    def train_on(self, acts):
         enc, loss, l1, mse = self.encoder(acts)
         loss.backward()
         self.optimizer.step()
         self.scheduler.step()
         self.optimizer.zero_grad()
 
-        if report:
+        self.steps += 1
+
+        if self.steps % self.cfg.steps_per_report == 0:
             if self.encoder.cfg.record_neuron_freqs:
                 freqs, avg_fired = self.encoder.get_firing_data()
                 freq_data = {
@@ -92,3 +97,6 @@ class AutoEncoderTrainer:
                 "lr": self.scheduler.get_last_lr()[0],
                 **freq_data,
             })
+
+    def finish(self):
+        wandb.finish()
