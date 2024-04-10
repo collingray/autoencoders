@@ -1,7 +1,7 @@
 import torch
 import datasets
 from transformer_lens import HookedTransformer
-from tqdm import tqdm
+from tqdm.autonotebook import tqdm
 import gc
 
 
