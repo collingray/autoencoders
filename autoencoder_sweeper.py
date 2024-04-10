@@ -54,7 +54,7 @@ class AutoEncoderSweeperConfig:
     steps_per_report: int = 100
 
 
-def create_trainer_worker(pidx: int, sweep_cfgs: list[dict], act_queues: list[Queue], cfg: AutoEncoderSweeperConfig):
+def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_queues: list[Queue], cfg: AutoEncoderSweeperConfig):
 
     sweep_cfg = sweep_cfgs[pidx]
     act_queue = act_queues[pidx]
@@ -76,7 +76,8 @@ def create_trainer_worker(pidx: int, sweep_cfgs: list[dict], act_queues: list[Qu
         warmup_percent=sweep_cfg["warmup_percent"],
         wb_project=cfg.wb_project,
         wb_entity=cfg.wb_entity,
-        wb_name="reg={:.1e}_lr={:.1e}_b1={:g}_b2={:g}_wu={:g}".format(
+        wb_name="{}: reg={:.1e}_lr={:.1e}_b1={:g}_b2={:g}_wu={:g}".format(
+            offset+pidx,
             sweep_cfg["lambda_reg"],
             sweep_cfg["lr"],
             sweep_cfg["beta1"],
@@ -134,9 +135,11 @@ class AutoEncoderSweeper:
         torch.multiprocessing.set_start_method('spawn', force=True)
 
         for i in range(0, len(self.sweep_cfgs), self.cfg.parallelism):
-            queues = [Queue(maxsize=1) for _ in range(self.cfg.parallelism)]
+            num_trainers = min(self.cfg.parallelism, len(self.sweep_cfgs) - i)
 
-            print(f"Running configs {i+1} to {i + self.cfg.parallelism} of {len(self.sweep_cfgs)}")
+            queues = [Queue(maxsize=1) for _ in range(num_trainers)]
+
+            print(f"Running configs {i+1} to {i+num_trainers} of {len(self.sweep_cfgs)}")
 
             # reset buffer (if it is not the first iteration)
             if i > 0:
@@ -144,8 +147,8 @@ class AutoEncoderSweeper:
 
             trainer_workers = spawn(
                 create_trainer_worker,
-                nprocs=self.cfg.parallelism,
-                args=(self.sweep_cfgs[i:i + self.cfg.parallelism], queues, self.cfg),
+                nprocs=num_trainers,
+                args=(i+1, self.sweep_cfgs[i:i + self.cfg.parallelism], queues, self.cfg),
                 join=False
             )
 
