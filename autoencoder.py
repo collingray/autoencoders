@@ -14,9 +14,10 @@ class AutoEncoderConfig:
             device="cuda",
             dtype=torch.bfloat16,
             lambda_reg=0.001,
-            record_neuron_freqs=False,
+            record_data=False,
             num_firing_buckets=10,
             firing_bucket_size=1000000,
+            fvu_buffer_size=512,
             name="autoencoder",
             save_dir="./weights",
             **kwargs
@@ -29,7 +30,11 @@ class AutoEncoderConfig:
         :param device: the device to use for the model
         :param dtype: the dtype to use for the model
         :param lambda_reg: the regularization strength
-        :param record_neuron_freqs: if True, the number of times each neuron fires will be recorded
+        :param record_data: if True, a variety of data will be recorded during on forward passes, including neuron
+        firing frequencies and the average FVU
+        :param num_firing_buckets: the number of buckets to use for recording neuron firing
+        :param firing_bucket_size: the size of each bucket for recording neuron firing
+        :param fvu_buffer_size: the size of the buffer to use for recording data for calculating the average FVU
         :param name: the name to use when saving the model
         :param save_dir: the directory to save the model to
         """
@@ -41,9 +46,10 @@ class AutoEncoderConfig:
         self.device = device
         self.dtype = dtype
         self.lambda_reg = lambda_reg
-        self.record_neuron_freqs = record_neuron_freqs
+        self.record_neuron_freqs = record_data
         self.num_firing_buckets = num_firing_buckets
         self.firing_bucket_size = firing_bucket_size
+        self.fvu_buffer_size = fvu_buffer_size
         self.name = name
         self.save_dir = save_dir
 
@@ -103,10 +109,22 @@ class AutoEncoder(nn.Module):
             self.num_passes = torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32)
             self.neuron_firings = torch.zeros(cfg.num_firing_buckets, cfg.m_dim, device=cfg.device, dtype=torch.int32)
 
+            self.total_forward_passes = 0
+            self.buffer_idx = 0
+            self.mse_buffer = torch.zeros(cfg.fvu_buffer_size, device=cfg.device, dtype=cfg.dtype)
+            self.input_buffer = torch.zeros(cfg.fvu_buffer_size, cfg.n_dim, device=cfg.device, dtype=cfg.dtype)
+
     def forward(self, x):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
         loss, l1, mse = self.loss(x, reconstructed, encoded, self.cfg.lambda_reg)
+
+        if self.cfg.record_neuron_freqs:
+            self.mse_buffer[self.buffer_idx] = mse
+            self.input_buffer[self.buffer_idx] = x
+            self.buffer_idx = (self.buffer_idx + 1) % self.cfg.fvu_buffer_size
+            self.total_forward_passes += 1
+
         return encoded, loss, l1, mse
 
     def encode(self, x):
@@ -130,9 +148,9 @@ class AutoEncoder(nn.Module):
         return self.decoder(x) + self.pre_encoder_bias
 
     def loss(self, x, x_out, latent, lambda_reg):
-        l1 = lambda_reg * self.normalized_l1(x, latent)
+        l1 = self.normalized_l1(x, latent)
         mse = self.normalized_reconstruction_mse(x, x_out)
-        total = l1 + mse
+        total = (lambda_reg * l1) + mse
 
         return total, l1, mse
 
@@ -180,7 +198,13 @@ class AutoEncoder(nn.Module):
         freqs = firings / passes
         avg_fired = firings.sum().item() / passes
 
-        return freqs, avg_fired
+        mses = self.mse_buffer[:min(self.total_forward_passes, self.cfg.fvu_buffer_size)]
+        avg_mse = mses.mean().item()
+        inputs = self.input_buffer[:min(self.total_forward_passes, self.cfg.fvu_buffer_size)]
+        avg_var = inputs.var(dim=0).mean().item()
+        avg_fvu = avg_mse / avg_var
+
+        return freqs, avg_fired, avg_fvu
 
     def save(self, checkpoint):
         filename = f"{self.cfg.name}_{checkpoint}"

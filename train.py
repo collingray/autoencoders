@@ -62,7 +62,7 @@ encoder_cfg = AutoEncoderConfig(
     device=primary_device,
     lambda_reg=1e-3,
     tied=False,
-    record_neuron_freqs=True,
+    record_data=True,
 )
 encoder = AutoEncoder(encoder_cfg)
 
@@ -109,7 +109,7 @@ try:
         scheduler.step()
         optimizer.zero_grad()
         if i % steps_per_report == 0 and i > 0:
-            freqs, avg_fired = encoder.get_firing_data()
+            freqs, avg_fired, fvu = encoder.get_firing_data()
 
             wandb.log({
                 "l1": l1.item(),

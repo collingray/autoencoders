@@ -82,10 +82,11 @@ class AutoEncoderTrainer:
 
         if self.steps % self.cfg.steps_per_report == 0:
             if self.encoder.cfg.record_neuron_freqs:
-                freqs, avg_fired = self.encoder.get_firing_data()
+                freqs, avg_l0, avg_fvu = self.encoder.get_firing_data()
                 freq_data = {
-                    "avg_neurons_fired": avg_fired,
-                    "feature_density": wandb.Histogram(freqs.log10().nan_to_num(neginf=-10).cpu())
+                    "feature_density": wandb.Histogram(freqs.log10().nan_to_num(neginf=-10).cpu()),
+                    "avg_l0": avg_l0,
+                    "avg_fvu": avg_fvu
                 }
             else:
                 freq_data = {}
@@ -93,10 +94,13 @@ class AutoEncoderTrainer:
             wandb.log({
                 "l1": l1.item(),
                 "mse": mse.item(),
-                "total_loss": loss.item(),
+                "loss": loss.item(),
                 "lr": self.scheduler.get_last_lr()[0],
                 **freq_data,
             })
 
     def finish(self):
+        freqs, avg_l0, avg_fvu = self.encoder.get_firing_data()
+        wandb.summary["l0"] = avg_l0
+        wandb.summary["fvu"] = avg_fvu
         wandb.finish()

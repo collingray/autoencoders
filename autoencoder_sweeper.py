@@ -65,7 +65,7 @@ def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_qu
         device=cfg.device,
         dtype=cfg.dtype,
         lambda_reg=sweep_cfg["lambda_reg"],
-        record_neuron_freqs=True,
+        record_data=True,
     )
 
     trainer_cfg = AutoEncoderTrainerConfig(
@@ -141,9 +141,8 @@ class AutoEncoderSweeper:
 
             print(f"Running configs {i+1} to {i+num_trainers} of {len(self.sweep_cfgs)}")
 
-            # reset buffer (if it is not the first iteration)
-            if i > 0:
-                self.buffer.reset_dataset()
+            # reset buffer
+            self.buffer.reset_dataset()
 
             trainer_workers = spawn(
                 create_trainer_worker,
