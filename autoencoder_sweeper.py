@@ -44,13 +44,13 @@ class AutoEncoderSweeperConfig:
     beta2: List[float]
     lambda_reg: List[float]
     warmup_percent: List[float]
+    layer: List[int] = [0]
     wb_project: str
     wb_entity: str
     wb_group: Optional[str] = None
     wb_config: Optional[dict] = None
     dtype: torch.dtype = torch.bfloat16
     device: str = "cuda"
-    layer: int = 0
     total_activations: int = int(2e7)
     batch_size: int = 1024
     parallelism: int = 8
@@ -79,8 +79,9 @@ def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_qu
         warmup_percent=sweep_cfg["warmup_percent"],
         wb_project=cfg.wb_project,
         wb_entity=cfg.wb_entity,
-        wb_name="{}: reg={:.1e}_lr={:.1e}_b1={:g}_b2={:g}_wu={:g}".format(
+        wb_name="{}: L{}_R{:.1e}_LR={:.1e}".format(
             offset + pidx,
+            sweep_cfg["layer"],
             sweep_cfg["lambda_reg"],
             sweep_cfg["lr"],
             sweep_cfg["beta1"],
@@ -106,7 +107,7 @@ def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_qu
             trainer.train_on(acts)
             del acts
             act_queue.task_done()
-    except Exception as e:
+    except Exception as _:
         logging.error(f"Process #{pidx} encountered an error:\n{traceback.format_exc()}")
         # re-raise the exception in the main process
         sys.exit(1)
@@ -127,12 +128,15 @@ class AutoEncoderSweeper:
                 "beta2": beta2,
                 "lambda_reg": lambda_reg,
                 "warmup_percent": warmup_percent,
+                "layer": layer,
             }
             for lr in cfg.lr
             for beta1 in cfg.beta1
             for beta2 in cfg.beta2
             for lambda_reg in cfg.lambda_reg
             for warmup_percent in cfg.warmup_percent
+            for layer in cfg.layer  # layer is last so that it is always iterated over in adjacent cfgs, this speeds
+            # up the sweep since the full set activations from the model can always be used
         ]
 
     def run(self):
@@ -153,25 +157,27 @@ class AutoEncoderSweeper:
             # reset buffer
             self.buffer.reset_dataset()
 
+            active_sweep_cfgs = self.sweep_cfgs[i:i + self.cfg.parallelism]
+
             trainer_workers = spawn(
                 create_trainer_worker,
                 nprocs=num_trainers,
-                args=(i + 1, self.sweep_cfgs[i:i + self.cfg.parallelism], queues, self.cfg),
+                args=(i + 1, active_sweep_cfgs, queues, self.cfg),
                 join=False
             )
 
             for _ in tqdm(range(self.cfg.total_activations // self.cfg.batch_size)):
                 acts = self.buffer.next(batch=self.cfg.batch_size)
                 # [batch_size, layers, n_dim] -> [batch_size, n_dim]
-                acts = acts[:, self.cfg.layer, :].to(self.cfg.device, dtype=self.cfg.dtype)
+                acts = acts.to(self.cfg.device, dtype=self.cfg.dtype)
 
                 # block until all previous activations have been processed
                 # this comes before so that buffer.next() can be called in parallel, since it can be slow to refresh
                 for q in queues:
                     q.join()
 
-                for q in queues:
-                    q.put(acts)
+                for j, q in enumerate(queues):
+                    q.put(acts[:, active_sweep_cfgs[j]["layer"], :])
 
             for q in queues:
                 q.put(None)

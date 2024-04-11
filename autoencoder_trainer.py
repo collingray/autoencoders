@@ -100,7 +100,13 @@ class AutoEncoderTrainer:
             })
 
     def finish(self):
-        freqs, avg_l0, avg_fvu = self.encoder.get_data()
-        wandb.summary["l0"] = avg_l0
-        wandb.summary["fvu"] = avg_fvu
+        # Log the final data if it was recorded, then finish the wandb run
+        if self.encoder.cfg.record_data:
+            freqs, avg_l0, avg_fvu = self.encoder.get_data()
+            wandb.log({
+                "feature_density": wandb.Histogram(freqs.log10().nan_to_num(neginf=-10).cpu()),
+                "avg_l0": avg_l0,
+                "avg_fvu": avg_fvu
+            })
+
         wandb.finish()
