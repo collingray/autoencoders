@@ -198,7 +198,7 @@ class AutoEncoder(nn.Module):
         self.input_avg = ((n * self.input_avg) + x.sum(dim=0)) / (n + batch_size)
         self.input_var = ((n * self.input_var) + ((x - self.input_avg) ** 2).sum(dim=0)) / (n + batch_size)
 
-        self.total_forward_passes += batch_size
+        self.num_forward_passes += batch_size
 
     def get_data(self):
         """

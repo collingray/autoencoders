@@ -1,4 +1,4 @@
-from time import sleep
+import multiprocessing
 from typing import List, Optional
 
 from autoencoder_trainer import *
@@ -6,8 +6,11 @@ from buffer import *
 from tqdm.autonotebook import tqdm
 from utils import *
 import gc
+import torch.multiprocessing
 from torch.multiprocessing import JoinableQueue as Queue, spawn
+import logging
 import sys
+import traceback
 
 
 @dataclass
@@ -54,8 +57,8 @@ class AutoEncoderSweeperConfig:
     steps_per_report: int = 100
 
 
-def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_queues: list[Queue], cfg: AutoEncoderSweeperConfig):
-
+def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_queues: list[Queue],
+                          cfg: AutoEncoderSweeperConfig):
     sweep_cfg = sweep_cfgs[pidx]
     act_queue = act_queues[pidx]
 
@@ -77,7 +80,7 @@ def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_qu
         wb_project=cfg.wb_project,
         wb_entity=cfg.wb_entity,
         wb_name="{}: reg={:.1e}_lr={:.1e}_b1={:g}_b2={:g}_wu={:g}".format(
-            offset+pidx,
+            offset + pidx,
             sweep_cfg["lambda_reg"],
             sweep_cfg["lr"],
             sweep_cfg["beta1"],
@@ -103,6 +106,10 @@ def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_qu
             trainer.train_on(acts)
             del acts
             act_queue.task_done()
+    except Exception as e:
+        logging.error(f"Process #{pidx} encountered an error:\n{traceback.format_exc()}")
+        # re-raise the exception in the main process
+        sys.exit(1)
     finally:
         act_queue.task_done()
         trainer.finish()
@@ -134,12 +141,14 @@ class AutoEncoderSweeper:
         # required for torch.multiprocessing to work with CUDA tensors
         torch.multiprocessing.set_start_method('spawn', force=True)
 
+        multiprocessing.log_to_stderr(logging.ERROR)
+
         for i in range(0, len(self.sweep_cfgs), self.cfg.parallelism):
             num_trainers = min(self.cfg.parallelism, len(self.sweep_cfgs) - i)
 
             queues = [Queue(maxsize=1) for _ in range(num_trainers)]
 
-            print(f"Running configs {i+1} to {i+num_trainers} of {len(self.sweep_cfgs)}")
+            print(f"Running configs {i + 1} to {i + num_trainers} of {len(self.sweep_cfgs)}")
 
             # reset buffer
             self.buffer.reset_dataset()
@@ -147,7 +156,7 @@ class AutoEncoderSweeper:
             trainer_workers = spawn(
                 create_trainer_worker,
                 nprocs=num_trainers,
-                args=(i+1, self.sweep_cfgs[i:i + self.cfg.parallelism], queues, self.cfg),
+                args=(i + 1, self.sweep_cfgs[i:i + self.cfg.parallelism], queues, self.cfg),
                 join=False
             )
 
