@@ -109,7 +109,7 @@ try:
         scheduler.step()
         optimizer.zero_grad()
         if i % steps_per_report == 0 and i > 0:
-            freqs, avg_fired, fvu = encoder.get_firing_data()
+            freqs, avg_fired, fvu = encoder.get_data()
 
             wandb.log({
                 "l1": l1.item(),

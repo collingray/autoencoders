@@ -17,7 +17,6 @@ class AutoEncoderConfig:
             record_data=False,
             num_firing_buckets=10,
             firing_bucket_size=1000000,
-            fvu_buffer_size=512,
             name="autoencoder",
             save_dir="./weights",
             **kwargs
@@ -34,7 +33,6 @@ class AutoEncoderConfig:
         firing frequencies and the average FVU
         :param num_firing_buckets: the number of buckets to use for recording neuron firing
         :param firing_bucket_size: the size of each bucket for recording neuron firing
-        :param fvu_buffer_size: the size of the buffer to use for recording data for calculating the average FVU
         :param name: the name to use when saving the model
         :param save_dir: the directory to save the model to
         """
@@ -46,10 +44,9 @@ class AutoEncoderConfig:
         self.device = device
         self.dtype = dtype
         self.lambda_reg = lambda_reg
-        self.record_neuron_freqs = record_data
+        self.record_data = record_data
         self.num_firing_buckets = num_firing_buckets
         self.firing_bucket_size = firing_bucket_size
-        self.fvu_buffer_size = fvu_buffer_size
         self.name = name
         self.save_dir = save_dir
 
@@ -104,26 +101,23 @@ class AutoEncoder(nn.Module):
         else:
             self.decoder = nn.Linear(cfg.m_dim, cfg.n_dim, bias=False, device=cfg.device, dtype=cfg.dtype)
 
-        if cfg.record_neuron_freqs:
+        if cfg.record_data:
             # Bucketed rolling avg. for memory efficiency
-            self.num_passes = torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32)
+            self.num_encodes = torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32)
             self.neuron_firings = torch.zeros(cfg.num_firing_buckets, cfg.m_dim, device=cfg.device, dtype=torch.int32)
 
-            self.total_forward_passes = 0
-            self.buffer_idx = 0
-            self.mse_buffer = torch.zeros(cfg.fvu_buffer_size, device=cfg.device, dtype=cfg.dtype)
-            self.input_buffer = torch.zeros(cfg.fvu_buffer_size, cfg.n_dim, device=cfg.device, dtype=cfg.dtype)
+            self.num_forward_passes = 0
+            self.mse_ema = 0.0
+            self.input_avg = torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype)
+            self.input_var = torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype)
 
     def forward(self, x):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
         loss, l1, mse = self.loss(x, reconstructed, encoded, self.cfg.lambda_reg)
 
-        if self.cfg.record_neuron_freqs:
-            self.mse_buffer[self.buffer_idx] = mse
-            self.input_buffer[self.buffer_idx] = x
-            self.buffer_idx = (self.buffer_idx + 1) % self.cfg.fvu_buffer_size
-            self.total_forward_passes += 1
+        if self.cfg.record_data:
+            self.record_fvu_data(x, mse)
 
         return encoded, loss, l1, mse
 
@@ -131,16 +125,8 @@ class AutoEncoder(nn.Module):
         x = x - self.pre_encoder_bias
         x = self.relu(self.encoder(x) + self.pre_activation_bias)
 
-        if self.cfg.record_neuron_freqs:
-            if self.num_passes[0] >= self.cfg.firing_bucket_size:
-                # If we've exceeded the bucket size, roll the data and reset the first bucket
-                self.num_passes = torch.roll(self.num_passes, 1, 0)
-                self.neuron_firings = torch.roll(self.neuron_firings, 1, 0)
-                self.num_passes[0] = 0
-                self.neuron_firings[0] = 0
-
-            self.num_passes[0] += x.shape[0]
-            self.neuron_firings[0] += (x > 0).sum(dim=0)
+        if self.cfg.record_data:
+            self.record_firing_data(x)
 
         return x
 
@@ -185,7 +171,36 @@ class AutoEncoder(nn.Module):
         """
         return (latent.norm(dim=1, p=1) / x.norm(dim=1, p=2)).mean()
 
-    def get_firing_data(self):
+    def record_firing_data(self, x):
+        if self.num_encodes[0] >= self.cfg.firing_bucket_size:
+            # If we've exceeded the bucket size, roll the data and reset the first bucket
+            self.num_encodes = torch.roll(self.num_encodes, 1, 0)
+            self.neuron_firings = torch.roll(self.neuron_firings, 1, 0)
+            self.num_encodes[0] = 0
+            self.neuron_firings[0] = 0
+
+        self.num_encodes[0] += x.shape[0]
+        self.neuron_firings[0] += (x > 0).sum(dim=0)
+
+    def record_fvu_data(self, x: torch.Tensor, mse: torch.Tensor):
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        batch_size = x.shape[0]
+
+        n = self.num_forward_passes
+
+        # Exponential moving average of the MSE, effectively updated `batch_size` times
+        alpha = 0.05
+        mse = mse.item()
+        self.mse_ema = ((1 - alpha) ** batch_size) * (self.mse_ema - mse) + mse
+
+        # Update variance to include new inputs
+        self.input_avg = ((n * self.input_avg) + x.sum(dim=0)) / (n + batch_size)
+        self.input_var = ((n * self.input_var) + ((x - self.input_avg) ** 2).sum(dim=0)) / (n + batch_size)
+
+        self.total_forward_passes += batch_size
+
+    def get_data(self):
         """
         Get data on the firing of different neurons in the hidden layer
         :return: A tuple containing a tensor of the frequency with which each neuron fires and the average number of
@@ -193,16 +208,13 @@ class AutoEncoder(nn.Module):
         """
 
         firings = self.neuron_firings.sum(dim=0).float()
-        passes = self.num_passes.sum().item()
+        passes = self.num_encodes.sum().item()
 
         freqs = firings / passes
         avg_fired = firings.sum().item() / passes
 
-        mses = self.mse_buffer[:min(self.total_forward_passes, self.cfg.fvu_buffer_size)]
-        avg_mse = mses.mean().item()
-        inputs = self.input_buffer[:min(self.total_forward_passes, self.cfg.fvu_buffer_size)]
-        avg_var = inputs.var(dim=0).mean().item()
-        avg_fvu = avg_mse / avg_var
+        # Calculate the average FVU
+        avg_fvu = self.mse_ema / self.input_var.mean()
 
         return freqs, avg_fired, avg_fvu
 

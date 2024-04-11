@@ -81,8 +81,8 @@ class AutoEncoderTrainer:
         self.steps += 1
 
         if self.steps % self.cfg.steps_per_report == 0:
-            if self.encoder.cfg.record_neuron_freqs:
-                freqs, avg_l0, avg_fvu = self.encoder.get_firing_data()
+            if self.encoder.cfg.record_data:
+                freqs, avg_l0, avg_fvu = self.encoder.get_data()
                 freq_data = {
                     "feature_density": wandb.Histogram(freqs.log10().nan_to_num(neginf=-10).cpu()),
                     "avg_l0": avg_l0,
@@ -100,7 +100,7 @@ class AutoEncoderTrainer:
             })
 
     def finish(self):
-        freqs, avg_l0, avg_fvu = self.encoder.get_firing_data()
+        freqs, avg_l0, avg_fvu = self.encoder.get_data()
         wandb.summary["l0"] = avg_l0
         wandb.summary["fvu"] = avg_fvu
         wandb.finish()
