@@ -44,7 +44,7 @@ class AutoEncoderSweeperConfig:
     beta2: List[float]
     lambda_reg: List[float]
     warmup_percent: List[float]
-    layer: List[int] = [0]
+    layer: List[int]
     wb_project: str
     wb_entity: str
     wb_group: Optional[str] = None
