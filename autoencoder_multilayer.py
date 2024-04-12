@@ -97,7 +97,7 @@ class AutoEncoderMultiLayer(AutoEncoder):
         else:
             raise ValueError(f"Invalid act_renorm_type {cfg.act_renorm_type}")
 
-        self.register_buffer("act_scales", (cfg.act_renorm_scale * norms.mean() / norms).to(cfg.device))
+        self.register_buffer("act_scales", (cfg.act_renorm_scale * norms.mean() / norms).to(cfg.device, cfg.dtype))
 
     @overrides
     def encode(self, x, layer: Optional[int] = None):
@@ -115,7 +115,7 @@ class AutoEncoderMultiLayer(AutoEncoder):
         if layer is not None:  # x: [batch_size, n_dim]
             x = x / self.act_scales[layer]
         else:  # x: [batch_size, num_layers, n_dim]
-            x = torch.einsum("bln,l->bln", x, 1/self.act_scales)
+            x = torch.einsum("bln,l->bln", x, 1 / self.act_scales)
 
         return super().decode(x)
 
@@ -134,4 +134,3 @@ class AutoEncoderMultiLayer(AutoEncoder):
         model.load_state_dict(torch.load(filename))
         print(f"Loaded model from {filename}")
         return model
-
