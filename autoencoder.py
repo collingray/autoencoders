@@ -204,7 +204,7 @@ class AutoEncoder(nn.Module):
 
         # Exponential moving average of the MSE, effectively updated `batch_size` times
         alpha = 0.05
-        mse = mse.item()
+        mse = mse.sum().item()
         self.mse_ema = ((1 - alpha) ** batch_size) * (self.mse_ema - mse) + mse
 
         # Update variance to include new inputs
