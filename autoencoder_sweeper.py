@@ -1,7 +1,8 @@
 import multiprocessing
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from autoencoder_trainer import *
+from autoencoder_multilayer_trainer import *
 from buffer import *
 from tqdm.autonotebook import tqdm
 from utils import *
@@ -36,6 +37,12 @@ class AutoEncoderSweeperConfig:
     wb_entity: the wandb entity to log to
     wb_group: the wandb group to log to
     wb_config: the wandb config to log
+    act_norms: the norms to use for layer activation renormalization. If set, then AutoEncoderMultiLayer will be used,
+        otherwise AutoEncoder will be used
+    act_renorm_type: the type of renormalization to use for layer activations, one of "linear", "sqrt",
+        "log", "none". Activations are scaled by act_renorm_scale*(avg(norms)/norms[layer]), where norms are the
+        result of the act_renorm_type applied to act_norms. Only used if act_norms is set
+    act_renorm_scale: a global scale to apply to all activations after renormalization. Only used if act_norms is set
     """
     n_dim: int
     m_dim: int
@@ -49,6 +56,9 @@ class AutoEncoderSweeperConfig:
     wb_entity: str
     wb_group: Optional[str] = None
     wb_config: Optional[dict] = None
+    act_norms: Optional[List[float]] = None
+    act_renorm_type: List[Literal["linear", "sqrt", "log", "none"]] = ["sqrt"]
+    act_renorm_scale: List[float] = [1.0]
     dtype: torch.dtype = torch.bfloat16
     device: str = "cuda"
     total_activations: int = int(2e7)
@@ -62,40 +72,79 @@ def create_trainer_worker(pidx: int, offset: int, sweep_cfgs: list[dict], act_qu
     sweep_cfg = sweep_cfgs[pidx]
     act_queue = act_queues[pidx]
 
-    encoder_cfg = AutoEncoderConfig(
-        n_dim=cfg.n_dim,
-        m_dim=cfg.m_dim,
-        device=cfg.device,
-        dtype=cfg.dtype,
-        lambda_reg=sweep_cfg["lambda_reg"],
-        record_data=True,
-    )
+    if cfg.act_norms is not None:
+        # multi-layer autoencoder
+        encoder_cfg = AutoEncoderMultiLayerConfig(
+            n_dim=cfg.n_dim,
+            m_dim=cfg.m_dim,
+            act_norms=cfg.act_norms,
+            act_renorm_type=sweep_cfg["act_renorm_type"],
+            act_renorm_scale=sweep_cfg["act_renorm_scale"],
+            device=cfg.device,
+            dtype=cfg.dtype,
+            lambda_reg=sweep_cfg["lambda_reg"],
+            record_data=True,
+        )
 
-    trainer_cfg = AutoEncoderTrainerConfig(
-        lr=sweep_cfg["lr"],
-        beta1=sweep_cfg["beta1"],
-        beta2=sweep_cfg["beta2"],
-        total_steps=cfg.total_activations // cfg.batch_size,
-        warmup_percent=sweep_cfg["warmup_percent"],
-        wb_project=cfg.wb_project,
-        wb_entity=cfg.wb_entity,
-        wb_name="{}: L{}_R{:.1e}_LR={:.1e}".format(
-            offset + pidx,
-            sweep_cfg["layer"],
-            sweep_cfg["lambda_reg"],
-            sweep_cfg["lr"],
-            sweep_cfg["beta1"],
-            sweep_cfg["beta2"],
-            sweep_cfg["warmup_percent"],
-        ),
-        wb_group=cfg.wb_group,
-        wb_config={
-            **(cfg.wb_config or {}),
-            **sweep_cfg,
-        },
-    )
+        trainer_cfg = AutoEncoderMultiLayerTrainerConfig(
+            lr=sweep_cfg["lr"],
+            beta1=sweep_cfg["beta1"],
+            beta2=sweep_cfg["beta2"],
+            total_steps=cfg.total_activations // cfg.batch_size,
+            warmup_percent=sweep_cfg["warmup_percent"],
+            wb_project=cfg.wb_project,
+            wb_entity=cfg.wb_entity,
+            wb_name="{}: ML_R{:.1e}_rt{}_rs{:g}_LR={:.1e}".format(
+                offset + pidx,
+                sweep_cfg["lambda_reg"],
+                sweep_cfg["act_renorm_type"],
+                sweep_cfg["act_renorm_scale"],
+                sweep_cfg["lr"],
+                ),
+            wb_group=cfg.wb_group,
+            wb_config={
+                **(cfg.wb_config or {}),
+                **sweep_cfg,
+            },
+        )
 
-    trainer = AutoEncoderTrainer(encoder_cfg, trainer_cfg)
+        trainer = AutoEncoderMultiLayerTrainer(encoder_cfg, trainer_cfg)
+    else:
+        # single-layer autoencoder
+        encoder_cfg = AutoEncoderConfig(
+            n_dim=cfg.n_dim,
+            m_dim=cfg.m_dim,
+            device=cfg.device,
+            dtype=cfg.dtype,
+            lambda_reg=sweep_cfg["lambda_reg"],
+            record_data=True,
+        )
+
+        trainer_cfg = AutoEncoderTrainerConfig(
+            lr=sweep_cfg["lr"],
+            beta1=sweep_cfg["beta1"],
+            beta2=sweep_cfg["beta2"],
+            total_steps=cfg.total_activations // cfg.batch_size,
+            warmup_percent=sweep_cfg["warmup_percent"],
+            wb_project=cfg.wb_project,
+            wb_entity=cfg.wb_entity,
+            wb_name="{}: L{}_R{:.1e}_LR={:.1e}".format(
+                offset + pidx,
+                sweep_cfg["layer"],
+                sweep_cfg["lambda_reg"],
+                sweep_cfg["lr"],
+                sweep_cfg["beta1"],
+                sweep_cfg["beta2"],
+                sweep_cfg["warmup_percent"],
+                ),
+            wb_group=cfg.wb_group,
+            wb_config={
+                **(cfg.wb_config or {}),
+                **sweep_cfg,
+            },
+        )
+
+        trainer = AutoEncoderTrainer(encoder_cfg, trainer_cfg)
 
     try:
         while True:
@@ -121,23 +170,46 @@ class AutoEncoderSweeper:
         self.cfg = cfg
         self.buffer = buffer
 
-        self.sweep_cfgs = [
-            {
-                "lr": lr,
-                "beta1": beta1,
-                "beta2": beta2,
-                "lambda_reg": lambda_reg,
-                "warmup_percent": warmup_percent,
-                "layer": layer,
-            }
-            for lr in cfg.lr
-            for beta1 in cfg.beta1
-            for beta2 in cfg.beta2
-            for lambda_reg in cfg.lambda_reg
-            for warmup_percent in cfg.warmup_percent
-            for layer in cfg.layer  # layer is last so that it is always iterated over in adjacent cfgs, this speeds
-            # up the sweep since the full set activations from the model can always be used
-        ]
+        if cfg.act_norms is not None:
+            # multi-layer autoencoder sweep configs
+            self.sweep_cfgs = [
+                {
+                    "lr": lr,
+                    "beta1": beta1,
+                    "beta2": beta2,
+                    "lambda_reg": lambda_reg,
+                    "warmup_percent": warmup_percent,
+                    "act_renorm_type": act_renorm_type,
+                    "act_renorm_scale": act_renorm_scale,
+                }
+                for lr in cfg.lr
+                for beta1 in cfg.beta1
+                for beta2 in cfg.beta2
+                for lambda_reg in cfg.lambda_reg
+                for warmup_percent in cfg.warmup_percent
+                for act_renorm_type in cfg.act_renorm_type
+                for act_renorm_scale in cfg.act_renorm_scale
+            ]
+
+        else:
+            # single-layer autoencoder sweep configs
+            self.sweep_cfgs = [
+                {
+                    "lr": lr,
+                    "beta1": beta1,
+                    "beta2": beta2,
+                    "lambda_reg": lambda_reg,
+                    "warmup_percent": warmup_percent,
+                    "layer": layer,
+                }
+                for lr in cfg.lr
+                for beta1 in cfg.beta1
+                for beta2 in cfg.beta2
+                for lambda_reg in cfg.lambda_reg
+                for warmup_percent in cfg.warmup_percent
+                for layer in cfg.layer  # layer is last so that it is always iterated over in adjacent cfgs, this speeds
+                # up the sweep since the full set activations from the model can always be used
+            ]
 
     def run(self):
         print(f"Running sweep with {len(self.sweep_cfgs)} configurations")
@@ -168,7 +240,6 @@ class AutoEncoderSweeper:
 
             for _ in tqdm(range(self.cfg.total_activations // self.cfg.batch_size)):
                 acts = self.buffer.next(batch=self.cfg.batch_size)
-                # [batch_size, layers, n_dim] -> [batch_size, n_dim]
                 acts = acts.to(self.cfg.device, dtype=self.cfg.dtype)
 
                 # block until all previous activations have been processed
@@ -177,7 +248,10 @@ class AutoEncoderSweeper:
                     q.join()
 
                 for j, q in enumerate(queues):
-                    q.put(acts[:, active_sweep_cfgs[j]["layer"], :])
+                    if self.cfg.act_norms is not None:
+                        q.put(acts)
+                    else:
+                        q.put(acts[:, active_sweep_cfgs[j]["layer"], :])
 
             for q in queues:
                 q.put(None)
