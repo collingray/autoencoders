@@ -71,14 +71,14 @@ class AutoEncoderMultiLayerTrainer:
             settings=wandb.Settings(disable_job_creation=True)
         )
 
-    def train_on(self, acts):
-        # acts: [batch_size, num_layers, n_dim]
-        self.steps += 1
-
+    def train_on(self, acts): # acts: [batch_size, num_layers, n_dim]
         enc, loss, l1, mse = self.encoder(acts)  # loss: [num_layers]
         loss.mean().backward()
         self.optimizer.step()
+        self.scheduler.step()
         self.optimizer.zero_grad()
+
+        self.steps += 1
 
         if self.steps % self.cfg.steps_per_report == 0:
             for layer in range(loss.shape[0]):
@@ -105,9 +105,6 @@ class AutoEncoderMultiLayerTrainer:
             "lr": self.scheduler.get_last_lr()[0],
             **freq_data,
         })
-
-        # we still only do one scheduler step per call to train_on
-        self.scheduler.step()
 
     def finish(self):
         # Log the final data if it was recorded, then finish the wandb run

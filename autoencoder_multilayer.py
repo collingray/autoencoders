@@ -97,7 +97,7 @@ class AutoEncoderMultiLayer(AutoEncoder):
         else:
             raise ValueError(f"Invalid act_renorm_type {cfg.act_renorm_type}")
 
-        self.register_buffer("act_scales", cfg.act_renorm_scale * norms.mean() / norms)
+        self.register_buffer("act_scales", (cfg.act_renorm_scale * norms.mean() / norms).to(cfg.device))
 
     @overrides
     def encode(self, x, layer: Optional[int] = None):
