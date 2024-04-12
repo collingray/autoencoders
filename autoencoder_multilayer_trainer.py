@@ -75,18 +75,18 @@ class AutoEncoderMultiLayerTrainer:
         # acts: [batch_size, num_layers, n_dim]
         self.steps += 1
 
-        for layer in range(acts.shape[1]):
-            enc, loss, l1, mse = self.encoder(acts[:, layer, :])
-            loss.backward()
-            self.optimizer.step()
-            self.optimizer.zero_grad()
+        enc, loss, l1, mse = self.encoder(acts)  # loss: [num_layers]
+        loss.mean().backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
 
-            if self.steps % self.cfg.steps_per_report == 0:
+        if self.steps % self.cfg.steps_per_report == 0:
+            for layer in range(loss.shape[0]):
                 wandb.log({
                     f"layer_{layer}": {
-                        "l1": l1.item(),
-                        "mse": mse.item(),
-                        "loss": loss.item(),
+                        "l1": l1[layer].item(),
+                        "mse": mse[layer].item(),
+                        "loss": loss[layer].item(),
                     }
                 })
 

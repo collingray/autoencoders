@@ -52,13 +52,13 @@ class AutoEncoderSweeperConfig:
     lambda_reg: List[float]
     warmup_percent: List[float]
     layer: List[int]
+    act_norms: Optional[List[float]]
+    act_renorm_type: List[Literal["linear", "sqrt", "log", "none"]]
+    act_renorm_scale: List[float]
     wb_project: str
     wb_entity: str
     wb_group: Optional[str] = None
     wb_config: Optional[dict] = None
-    act_norms: Optional[List[float]] = None
-    act_renorm_type: List[Literal["linear", "sqrt", "log", "none"]] = ["sqrt"]
-    act_renorm_scale: List[float] = [1.0]
     dtype: torch.dtype = torch.bfloat16
     device: str = "cuda"
     total_activations: int = int(2e7)

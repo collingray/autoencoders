@@ -100,27 +100,22 @@ class AutoEncoderMultiLayer(AutoEncoder):
         self.register_buffer("act_scales", cfg.act_renorm_scale * norms.mean() / norms)
 
     @overrides
-    def forward(self, x, layer: Optional[int] = None):
-        encoded = self.encode(x, layer)
-        reconstructed = self.decode(encoded, layer)
-        loss, l1, mse = self.loss(x, reconstructed, encoded, self.cfg.lambda_reg)
-
-        if self.cfg.record_data:
-            self.record_fvu_data(x, mse)
-
-        return encoded, loss, l1, mse
-
-    @overrides
     def encode(self, x, layer: Optional[int] = None):
-        if layer is not None:
+        # A layer should only be specified if x is a single layer
+        if layer is not None:  # x: [batch_size, n_dim]
             x = x * self.act_scales[layer]
+        else:  # x: [batch_size, num_layers, n_dim]
+            x = torch.einsum("bln,l->bln", x, self.act_scales)
 
         return super().encode(x)
 
     @overrides
     def decode(self, x, layer: Optional[int] = None):
-        if layer is not None:
+        # A layer should only be specified if x is a single layer
+        if layer is not None:  # x: [batch_size, n_dim]
             x = x / self.act_scales[layer]
+        else:  # x: [batch_size, num_layers, n_dim]
+            x = torch.einsum("bln,l->bln", x, 1/self.act_scales)
 
         return super().decode(x)
 
