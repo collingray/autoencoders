@@ -160,18 +160,31 @@ class AutoEncoder(nn.Module):
     @staticmethod
     def normalized_reconstruction_mse(x, recons):
         """
-        The MSE between the input and its reconstruction, normalized by the mean square of the input
+        The MSE between the input and its reconstruction, normalized by the mean square of the input, averaged over the
+        batch.
+
+        [n_dim]*2 -> []
+        Or
+        [batch, n_dim]*2 -> []
+        Or
+        [batch, layer, n_dim]*2 -> [layer]
         """
-        return (((x - recons) ** 2).mean(dim=1) / (x ** 2).mean(dim=1)).mean()
+        return (((x - recons) ** 2).mean(dim=-1) / (x ** 2).mean(dim=-1)).mean(dim=0)
 
     @staticmethod
     def normalized_l1(x, latent):
         """
-        The L1 norm of the latent representation, normalized by the L2 norm of the input
-        """
-        return (latent.norm(dim=1, p=1) / x.norm(dim=1, p=2)).mean()
+        The L1 norm of the latent representation, normalized by the L2 norm of the input, averaged over the batch.
 
-    def record_firing_data(self, x):
+        [n_dim], [m_dim] -> []
+        Or
+        [batch, n_dim], [batch, m_dim] -> []
+        Or
+        [batch, layer, n_dim], [batch, layer, m_dim] -> [layer]
+        """
+        return (latent.norm(dim=-1, p=1) / x.norm(dim=-1, p=2)).mean(dim=0)
+
+    def record_firing_data(self, x: torch.Tensor):
         if self.num_encodes[0] >= self.cfg.firing_bucket_size:
             # If we've exceeded the bucket size, roll the data and reset the first bucket
             self.num_encodes = torch.roll(self.num_encodes, 1, 0)
@@ -179,12 +192,12 @@ class AutoEncoder(nn.Module):
             self.num_encodes[0] = 0
             self.neuron_firings[0] = 0
 
+        x = x.view(-1, x.shape[-1])
         self.num_encodes[0] += x.shape[0]
         self.neuron_firings[0] += (x > 0).sum(dim=0)
 
     def record_fvu_data(self, x: torch.Tensor, mse: torch.Tensor):
-        if x.dim() == 1:
-            x = x.unsqueeze(0)
+        x = x.view(-1, x.shape[-1])
         batch_size = x.shape[0]
 
         n = self.num_forward_passes
