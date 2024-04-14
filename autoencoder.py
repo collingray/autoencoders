@@ -102,14 +102,7 @@ class AutoEncoder(nn.Module):
             self.decoder = nn.Linear(cfg.m_dim, cfg.n_dim, bias=False, device=cfg.device, dtype=cfg.dtype)
 
         if cfg.record_data:
-            # Bucketed rolling avg. for memory efficiency
-            self.num_encodes = torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32)
-            self.neuron_firings = torch.zeros(cfg.num_firing_buckets, cfg.m_dim, device=cfg.device, dtype=torch.int32)
-
-            self.num_forward_passes = 0
-            self.mse_ema = 0.0
-            self.input_avg = torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype)
-            self.input_var = torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype)
+            self.register_data_buffers(cfg)
 
     def forward(self, x):
         encoded = self.encode(x)
@@ -121,11 +114,11 @@ class AutoEncoder(nn.Module):
 
         return encoded, loss, l1, mse
 
-    def encode(self, x):
+    def encode(self, x, record=True):
         x = x - self.pre_encoder_bias
         x = self.relu(self.encoder(x) + self.pre_activation_bias)
 
-        if self.cfg.record_data:
+        if self.cfg.record_data and record:
             self.record_firing_data(x)
 
         return x
@@ -184,6 +177,21 @@ class AutoEncoder(nn.Module):
         """
         return (latent.norm(dim=-1, p=1) / x.norm(dim=-1, p=2)).mean(dim=0)
 
+    def register_data_buffers(self, cfg):
+        # Bucketed rolling avg. for memory efficiency
+        self.register_buffer("num_encodes", torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32),
+                             persistent=False)
+        self.register_buffer("neuron_firings",
+                             torch.zeros(cfg.num_firing_buckets, cfg.m_dim, device=cfg.device, dtype=torch.int32),
+                             persistent=False)
+
+        self.register_buffer("num_forward_passes", torch.tensor(0, device=cfg.device, dtype=torch.int32),
+                             persistent=False)
+        self.register_buffer("mse_ema", torch.tensor(0.0, device=cfg.device, dtype=cfg.dtype), persistent=False)
+        self.register_buffer("input_avg", torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype), persistent=False)
+        self.register_buffer("input_var", torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype), persistent=False)
+
+    @torch.no_grad()
     def record_firing_data(self, x: torch.Tensor):
         if self.num_encodes[0] >= self.cfg.firing_bucket_size:
             # If we've exceeded the bucket size, roll the data and reset the first bucket
@@ -192,12 +200,11 @@ class AutoEncoder(nn.Module):
             self.num_encodes[0] = 0
             self.neuron_firings[0] = 0
 
-        x = x.view(-1, x.shape[-1])
         self.num_encodes[0] += x.shape[0]
         self.neuron_firings[0] += (x > 0).sum(dim=0)
 
+    @torch.no_grad()
     def record_fvu_data(self, x: torch.Tensor, mse: torch.Tensor):
-        x = x.view(-1, x.shape[-1])
         batch_size = x.shape[0]
 
         n = self.num_forward_passes

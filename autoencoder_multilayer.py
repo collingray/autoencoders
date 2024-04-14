@@ -107,7 +107,7 @@ class AutoEncoderMultiLayer(AutoEncoder):
         else:  # x: [batch_size, num_layers, n_dim]
             x = torch.einsum("bln,l->bln", x, self.act_scales)
 
-        return super().encode(x)
+        return super().encode(x, record=layer is None)
 
     @overrides
     def decode(self, x, layer: Optional[int] = None):
@@ -118,6 +118,26 @@ class AutoEncoderMultiLayer(AutoEncoder):
             x = torch.einsum("bln,l->bln", x, 1 / self.act_scales)
 
         return super().decode(x)
+
+    def register_data_buffers(self, cfg):
+        num_layers = len(cfg.act_norms)
+
+        # Bucketed rolling avg. for memory efficiency
+        self.register_buffer("num_encodes", torch.zeros(cfg.num_firing_buckets, device=cfg.device, dtype=torch.int32),
+                             persistent=False)
+        self.register_buffer("neuron_firings",
+                             torch.zeros(cfg.num_firing_buckets, num_layers, cfg.m_dim, device=cfg.device,
+                                         dtype=torch.int32),
+                             persistent=False)
+
+        self.register_buffer("num_forward_passes", torch.tensor(0, device=cfg.device, dtype=torch.int32),
+                             persistent=False)
+        self.register_buffer("mse_ema", torch.zeros(num_layers, device=cfg.device, dtype=cfg.dtype),
+                             persistent=False)
+        self.register_buffer("input_avg", torch.zeros(num_layers, cfg.n_dim, device=cfg.device, dtype=cfg.dtype),
+                             persistent=False)
+        self.register_buffer("input_var", torch.zeros(num_layers, cfg.n_dim, device=cfg.device, dtype=cfg.dtype),
+                             persistent=False)
 
     def save(self, checkpoint):
         filename = f"{self.cfg.name}_{checkpoint}"
