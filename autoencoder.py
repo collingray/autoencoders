@@ -1,58 +1,43 @@
 import json
+from dataclasses import dataclass
+from typing import Optional
+
 import torch
 import torch.nn as nn
 from utils import TiedLinear
 
 
+@dataclass
 class AutoEncoderConfig:
-    def __init__(
-            self,
-            n_dim,
-            m_dim,
-            tied=False,
-            seed=None,
-            device="cuda",
-            dtype=torch.bfloat16,
-            lambda_reg=0.001,
-            record_data=False,
-            num_firing_buckets=10,
-            firing_bucket_size=1000000,
-            name="autoencoder",
-            save_dir="./weights",
-            **kwargs
-    ):
-        """
-        :param n_dim: the dimension of the input
-        :param m_dim: the dimension of the hidden layer
-        :param tied: if True, the decoder weights are tied to the encoder weights
-        :param seed: the seed to use for pytorch rng
-        :param device: the device to use for the model
-        :param dtype: the dtype to use for the model
-        :param lambda_reg: the regularization strength
-        :param record_data: if True, a variety of data will be recorded during on forward passes, including neuron
+    """The config for the `AutoEncoder` class
+
+    Args:
+        n_dim: the dimension of the input
+        m_dim: the dimension of the hidden layer
+        tied: if True, the decoder weights are tied to the encoder weights
+        seed: the seed to use for pytorch rng
+        device: the device to use for the model
+        dtype: the dtype to use for the model
+        lambda_reg: the regularization strength
+        record_data: if True, a variety of data will be recorded during on forward passes, including neuron
         firing frequencies and the average FVU
-        :param num_firing_buckets: the number of buckets to use for recording neuron firing
-        :param firing_bucket_size: the size of each bucket for recording neuron firing
-        :param name: the name to use when saving the model
-        :param save_dir: the directory to save the model to
-        """
-
-        self.n_dim = n_dim
-        self.m_dim = m_dim
-        self.tied = tied
-        self.seed = seed
-        self.device = device
-        self.dtype = dtype
-        self.lambda_reg = lambda_reg
-        self.record_data = record_data
-        self.num_firing_buckets = num_firing_buckets
-        self.firing_bucket_size = firing_bucket_size
-        self.name = name
-        self.save_dir = save_dir
-
-        # mapping for using sae-vis
-        self.d_in = n_dim
-        self.d_hidden = m_dim
+        num_firing_buckets: the number of buckets to use for recording neuron firing
+        firing_bucket_size: the size of each bucket for recording neuron firing
+        name: the name to use when saving the model
+        save_dir: the directory to save the model to
+    """
+    n_dim: int
+    m_dim: int
+    tied: bool = False
+    seed: Optional[int] = None
+    device: str = "cuda"
+    dtype: torch.dtype = torch.bfloat16
+    lambda_reg: float = 0.001
+    record_data: bool = False
+    num_firing_buckets: int = 10
+    firing_bucket_size: int = 1000000
+    name: str = "autoencoder"
+    save_dir: Optional[str] = None
 
 
 # Custom JSON encoder and decoder for AutoEncoderConfig, as torch.dtype is not serializable by default
