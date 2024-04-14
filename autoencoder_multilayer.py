@@ -70,14 +70,14 @@ class AutoEncoderMultiLayer(AutoEncoder):
         self.register_buffer("act_scales", (cfg.act_renorm_scale * norms.mean() / norms).to(cfg.device, cfg.dtype))
 
     @overrides
-    def encode(self, x, layer: Optional[int] = None):
+    def encode(self, x, record=True, layer: Optional[int] = None):
         # A layer should only be specified if x is a single layer
         if layer is not None:  # x: [batch_size, n_dim]
             x = x * self.act_scales[layer]
         else:  # x: [batch_size, num_layers, n_dim]
             x = torch.einsum("bln,l->bln", x, self.act_scales)
 
-        return super().encode(x, record=layer is None)
+        return super().encode(x, record=record and (layer is None))
 
     @overrides
     def decode(self, x, layer: Optional[int] = None):
