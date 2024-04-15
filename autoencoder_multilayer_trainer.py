@@ -5,6 +5,7 @@ import torch.optim.lr_scheduler
 import wandb
 
 from autoencoder_multilayer import *
+from buffer import ActivationsBuffer
 from utils import *
 
 
@@ -28,12 +29,14 @@ class AutoEncoderMultiLayerTrainerConfig:
     beta2: float
     total_steps: int
     warmup_percent: float
-    wb_project: str
-    wb_entity: str
+    steps_per_report: int = 4096
+    steps_per_resample: Optional[int] = None
+    num_resamples: Optional[int] = None
+    wb_project: Optional[str] = None
+    wb_entity: Optional[str] = None
     wb_name: Optional[str] = None
     wb_group: Optional[str] = None
     wb_config: Optional[dict] = None
-    steps_per_report: int = 100
 
 
 class AutoEncoderMultiLayerTrainer:
@@ -71,7 +74,7 @@ class AutoEncoderMultiLayerTrainer:
             settings=wandb.Settings(disable_job_creation=True)
         )
 
-    def train_on(self, acts): # acts: [batch_size, num_layers, n_dim]
+    def train_on(self, acts, buffer: Optional[ActivationsBuffer] = None):  # acts: [batch_size, num_layers, n_dim]
         enc, loss, l1, mse = self.encoder(acts)  # loss: [num_layers]
         loss.mean().backward()
         self.optimizer.step()
@@ -79,6 +82,11 @@ class AutoEncoderMultiLayerTrainer:
         self.optimizer.zero_grad()
 
         self.steps += 1
+
+        if (self.cfg.steps_per_resample and self.steps % self.cfg.steps_per_resample == 0) and (
+                not self.cfg.num_resamples or self.steps // self.cfg.steps_per_resample <= self.cfg.num_resamples):
+            assert buffer is not None, "Buffer must be provided to resample neurons"
+            self.encoder.resample_neurons(buffer.next(batch=2**16), batch_size=2**12, optimizer=self.optimizer)
 
         if self.steps % self.cfg.steps_per_report == 0:
             for layer in range(loss.shape[0]):

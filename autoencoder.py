@@ -35,7 +35,7 @@ class AutoEncoderConfig:
     lambda_reg: float = 0.001
     record_data: bool = True
     num_firing_buckets: int = 16
-    firing_bucket_size: int = 2**17
+    firing_bucket_size: int = 2**18
     name: str = "autoencoder"
     save_dir: Optional[str] = None
 
