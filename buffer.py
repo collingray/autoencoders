@@ -183,7 +183,7 @@ class ActivationsBuffer:
 
             if self.cfg.max_seq_length:
                 with Pool(8) as p:
-                    seqs = p.map(lambda s: truncate_seq(s, self.cfg.max_seq_length), seqs)
+                    seqs = p.starmap(truncate_seq, [(seq, self.cfg.max_seq_length) for seq in seqs])
 
             # run the seqs through the model to get the activations
             out, cache = self.model.run_with_cache(seqs, stop_at_layer=self.cfg.final_layer + 1,
