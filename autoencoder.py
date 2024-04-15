@@ -177,6 +177,8 @@ class AutoEncoder(nn.Module):
         dead_neuron_mask = self.neuron_firings.view(-1, self.cfg.m_dim).sum(dim=0) == 0
         dead_neuron_idxs = torch.where(dead_neuron_mask)[0]
 
+        print(f"Resampling {len(dead_neuron_idxs)} dead neurons")
+
         # Resample neurons with probability proportional to the square loss
         neuron_probs = square_input_losses / square_input_losses.sum()
 

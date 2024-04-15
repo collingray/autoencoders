@@ -51,9 +51,9 @@ class AutoEncoderMultiLayer(AutoEncoder):
     """
 
     def __init__(self, cfg: AutoEncoderMultiLayerConfig):
-        super().__init__(cfg)
-
         self.num_layers = len(cfg.act_norms) if cfg.act_norms is list else cfg.act_norms
+
+        super().__init__(cfg)
 
         if cfg.act_renorm_type == "none" or cfg.act_norms is int:
             # no renormalization
