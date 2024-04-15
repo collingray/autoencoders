@@ -265,7 +265,7 @@ class AutoEncoder(nn.Module):
         passes = self.num_encodes.sum().item()
 
         freqs = firings / passes
-        avg_fired = firings.sum().item() / passes
+        avg_fired = firings.sum(dim=-1) / passes
 
         # Calculate the average FVU
         avg_fvu = self.mse_ema / self.input_var.mean()

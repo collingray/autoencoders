@@ -86,33 +86,39 @@ class AutoEncoderMultiLayerTrainer:
         if (self.cfg.steps_per_resample and self.steps % self.cfg.steps_per_resample == 0) and (
                 not self.cfg.num_resamples or self.steps // self.cfg.steps_per_resample <= self.cfg.num_resamples):
             assert buffer is not None, "Buffer must be provided to resample neurons"
-            self.encoder.resample_neurons(buffer.next(batch=2**16), batch_size=2**12, optimizer=self.optimizer)
+
+            inputs = buffer.next(batch=2 ** 16).to(self.encoder.cfg.device, dtype=self.encoder.cfg.dtype)
+            self.encoder.resample_neurons(inputs, batch_size=2 ** 12, optimizer=self.optimizer)
 
         if self.steps % self.cfg.steps_per_report == 0:
-            for layer in range(loss.shape[0]):
-                wandb.log({
-                    f"layer_{layer}": {
-                        "l1": l1[layer].item(),
-                        "mse": mse[layer].item(),
-                        "loss": loss[layer].item(),
-                    }
+            metrics = {}
+
+            for layer in range(self.encoder.num_layers):
+                metrics[f"layer_{layer}"] = {
+                    "l1": l1[layer].item(),
+                    "mse": mse[layer].item(),
+                    "loss": loss[layer].item(),
+                }
+
+            if self.encoder.cfg.record_data:
+                freqs, avg_l0, avg_fvu = self.encoder.get_data()
+                for layer in range(self.encoder.num_layers):
+                    metrics[f"layer_{layer}"].update({
+                        "feature_density": wandb.Histogram(freqs[layer].log10().nan_to_num(neginf=-10).cpu()),
+                        "avg_l0": avg_l0[layer],
+                        "avg_fvu": avg_fvu[layer]
+                    })
+
+                metrics.update({
+                    "feature_density": wandb.Histogram(freqs.mean().log10().nan_to_num(neginf=-10).cpu()),
+                    "avg_l0": avg_l0.mean(),
+                    "avg_fvu": avg_fvu.mean()
                 })
 
-        # Only log recorded data and lr once per call to train_on, since it's the same for all layers
-        if self.encoder.cfg.record_data:
-            freqs, avg_l0, avg_fvu = self.encoder.get_data()
-            freq_data = {
-                "feature_density": wandb.Histogram(freqs.log10().nan_to_num(neginf=-10).cpu()),
-                "avg_l0": avg_l0,
-                "avg_fvu": avg_fvu
-            }
-        else:
-            freq_data = {}
-
-        wandb.log({
-            "lr": self.scheduler.get_last_lr()[0],
-            **freq_data,
-        })
+            wandb.log({
+                "lr": self.scheduler.get_last_lr()[0],
+                **metrics,
+            })
 
     def finish(self):
         # Log the final data if it was recorded, then finish the wandb run
