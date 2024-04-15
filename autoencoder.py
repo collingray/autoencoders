@@ -33,9 +33,9 @@ class AutoEncoderConfig:
     device: str = "cuda"
     dtype: torch.dtype = torch.bfloat16
     lambda_reg: float = 0.001
-    record_data: bool = False
-    num_firing_buckets: int = 10
-    firing_bucket_size: int = 1000000
+    record_data: bool = True
+    num_firing_buckets: int = 16
+    firing_bucket_size: int = 2**17
     name: str = "autoencoder"
     save_dir: Optional[str] = None
 
@@ -89,13 +89,14 @@ class AutoEncoder(nn.Module):
         if cfg.record_data:
             self.register_data_buffers(cfg)
 
-    def forward(self, x):
+    def forward(self, x, mean_over_batch=True):
         encoded = self.encode(x)
         reconstructed = self.decode(encoded)
-        loss, l1, mse = self.loss(x, reconstructed, encoded, self.cfg.lambda_reg)
+        loss, l1, mse = self.loss(x, reconstructed, encoded, self.cfg.lambda_reg, mean_over_batch=mean_over_batch)
 
         if self.cfg.record_data:
-            self.record_fvu_data(x, mse)
+            mean_mse = mse if mean_over_batch else mse.mean(dim=0)
+            self.record_fvu_data(x, mean_mse)
 
         return encoded, loss, l1, mse
 
@@ -111,9 +112,9 @@ class AutoEncoder(nn.Module):
     def decode(self, x):
         return self.decoder(x) + self.pre_encoder_bias
 
-    def loss(self, x, x_out, latent, lambda_reg):
-        l1 = self.normalized_l1(x, latent)
-        mse = self.normalized_reconstruction_mse(x, x_out)
+    def loss(self, x, x_out, latent, lambda_reg, mean_over_batch=True):
+        l1 = self.normalized_l1(x, latent, mean_over_batch=mean_over_batch)
+        mse = self.normalized_reconstruction_mse(x, x_out, mean_over_batch=mean_over_batch)
         total = (lambda_reg * l1) + mse
 
         return total, l1, mse
@@ -136,7 +137,7 @@ class AutoEncoder(nn.Module):
         return self.pre_encoder_bias
 
     @staticmethod
-    def normalized_reconstruction_mse(x, recons):
+    def normalized_reconstruction_mse(x, recons, mean_over_batch=True):
         """
         The MSE between the input and its reconstruction, normalized by the mean square of the input, averaged over the
         batch.
@@ -147,10 +148,11 @@ class AutoEncoder(nn.Module):
         Or
         [batch, layer, n_dim]*2 -> [layer]
         """
-        return (((x - recons) ** 2).mean(dim=-1) / (x ** 2).mean(dim=-1)).mean(dim=0)
+        mse = ((x - recons) ** 2).mean(dim=-1) / (x ** 2).mean(dim=-1)
+        return mse.mean(dim=0) if mean_over_batch else mse
 
     @staticmethod
-    def normalized_l1(x, latent):
+    def normalized_l1(x, latent, mean_over_batch=True):
         """
         The L1 norm of the latent representation, normalized by the L2 norm of the input, averaged over the batch.
 
@@ -160,7 +162,53 @@ class AutoEncoder(nn.Module):
         Or
         [batch, layer, n_dim], [batch, layer, m_dim] -> [layer]
         """
-        return (latent.norm(dim=-1, p=1) / x.norm(dim=-1, p=2)).mean(dim=0)
+        l1 = latent.norm(dim=-1, p=1) / x.norm(dim=-1, p=2)
+        return l1.mean(dim=0) if mean_over_batch else l1
+
+    def resample_neurons(self, inputs, batch_size, optimizer):
+        """
+        Resample dead neurons according to Anthropic's method
+        (see https://transformer-circuits.pub/2023/monosemantic-features#appendix-autoencoder-resampling)
+        """
+        square_input_losses = torch.cat(
+            [self.forward(inputs[i:i + batch_size])[1] for i in range(0, len(inputs), batch_size)]
+        ) ** 2
+
+        dead_neuron_mask = self.neuron_firings.view(-1, self.cfg.m_dim).sum(dim=0) == 0
+        dead_neuron_idxs = torch.where(dead_neuron_mask)[0]
+
+        # Resample neurons with probability proportional to the square loss
+        neuron_probs = square_input_losses / square_input_losses.sum()
+
+        # Resample inputs that caused dead neurons to fire, normalize to unit l2
+        sampled_inputs = nn.functional.normalize(inputs[torch.multinomial(neuron_probs, len(dead_neuron_idxs))], dim=-1)
+
+        # Calculate the average norm of the encoder weights for the live neurons
+        avg_encoder_norm = self.encoder.weight[~dead_neuron_mask].norm(dim=1).mean()
+
+        # Set the weights of the dead neurons to the resampled inputs, normalized to 20% of the average encoder norm
+        self.encoder.weight[dead_neuron_idxs] = sampled_inputs * avg_encoder_norm * 0.2
+
+        # Set the decoder weights of the dead neurons to the normed inputs
+        self.decoder.weight[:, dead_neuron_idxs] = sampled_inputs.T
+
+        # Set the biases of the dead neurons to 0
+        self.pre_activation_bias[dead_neuron_idxs] = 0
+
+        # Reset optimizer params for changed weights/biases
+        optim_state = optimizer.state_dict()["state"]
+
+        # bias
+        optim_state[1]["exp_avg"][dead_neuron_idxs] = 0
+        optim_state[1]["exp_avg_sq"][dead_neuron_idxs] = 0
+
+        # encoder weights
+        optim_state[2]["exp_avg"][dead_neuron_idxs] = 0
+        optim_state[2]["exp_avg_sq"][dead_neuron_idxs] = 0
+
+        # decoder weights
+        optim_state[3]["exp_avg"][:, dead_neuron_idxs] = 0
+        optim_state[3]["exp_avg_sq"][:, dead_neuron_idxs] = 0
 
     def register_data_buffers(self, cfg):
         # Bucketed rolling avg. for memory efficiency
@@ -196,7 +244,6 @@ class AutoEncoder(nn.Module):
 
         # Exponential moving average of the MSE, effectively updated `batch_size` times
         alpha = 0.05
-        mse = mse.sum().item()
         self.mse_ema = ((1 - alpha) ** batch_size) * (self.mse_ema - mse) + mse
 
         # Update variance to include new inputs
