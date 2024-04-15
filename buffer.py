@@ -1,7 +1,10 @@
+from random import random
+
 import torch
 import datasets
 from transformer_lens import HookedTransformer
 from tqdm.autonotebook import tqdm
+from multiprocessing import Pool
 import gc
 
 
@@ -16,7 +19,7 @@ class ActivationsBufferConfig:
             buffer_size=256,
             min_capacity=128,
             model_batch_size=8,
-            samples_per_seq=16,
+            samples_per_seq=None,
             max_seq_length=None,
             act_size=None,
             shuffle_buffer=False,
@@ -171,9 +174,13 @@ class ActivationsBuffer:
                 self.reset_dataset()
                 seqs = next(self.data_generator)
 
+            def process_seq(seq):
+                offset = int(random() * (len(seq) - self.cfg.max_seq_length))
+                return seq[offset:offset + self.cfg.max_seq_length]
+
             if self.cfg.max_seq_length:
-                for i in range(len(seqs)):
-                    seqs[i] = seqs[i][:self.cfg.max_seq_length]
+                with Pool(8) as p:
+                    seqs = p.map(process_seq, seqs)
 
             # run the seqs through the model to get the activations
             out, cache = self.model.run_with_cache(seqs, stop_at_layer=self.cfg.final_layer + 1,
