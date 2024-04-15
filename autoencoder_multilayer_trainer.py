@@ -29,7 +29,7 @@ class AutoEncoderMultiLayerTrainerConfig:
     beta2: float
     total_steps: int
     warmup_percent: float
-    steps_per_report: int = 4096
+    steps_per_report: int = 128
     steps_per_resample: Optional[int] = None
     num_resamples: Optional[int] = None
     wb_project: Optional[str] = None
@@ -110,7 +110,7 @@ class AutoEncoderMultiLayerTrainer:
                     })
 
                 metrics.update({
-                    "feature_density": wandb.Histogram(freqs.mean().log10().nan_to_num(neginf=-10).cpu()),
+                    "feature_density": wandb.Histogram(freqs.mean(dim=0).log10().nan_to_num(neginf=-10).cpu()),
                     "avg_l0": avg_l0.mean(),
                     "avg_fvu": avg_fvu.mean()
                 })
@@ -125,9 +125,9 @@ class AutoEncoderMultiLayerTrainer:
         if self.encoder.cfg.record_data:
             freqs, avg_l0, avg_fvu = self.encoder.get_data()
             wandb.log({
-                "feature_density": wandb.Histogram(freqs.log10().nan_to_num(neginf=-10).cpu()),
-                "avg_l0": avg_l0,
-                "avg_fvu": avg_fvu
+                "feature_density": wandb.Histogram(freqs.mean(dim=0).log10().nan_to_num(neginf=-10).cpu()),
+                "avg_l0": avg_l0.mean(),
+                "avg_fvu": avg_fvu.mean()
             })
 
         wandb.finish()
