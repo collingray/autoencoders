@@ -1,3 +1,5 @@
+from random import random
+
 import torch
 import torch.nn.functional as F
 
@@ -40,3 +42,8 @@ def optimizer_to(optim, device):
                     subparam.data = subparam.data.to(device)
                     if subparam._grad is not None:
                         subparam._grad.data = subparam._grad.data.to(device)
+
+
+def truncate_seq(seq, max_length):
+    offset = int(random() * (len(seq) - max_length))
+    return seq[offset:offset + max_length]
