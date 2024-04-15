@@ -222,9 +222,9 @@ class AutoEncoder(nn.Module):
 
         self.register_buffer("num_forward_passes", torch.tensor(0, device=cfg.device, dtype=torch.int32),
                              persistent=False)
-        self.register_buffer("mse_ema", torch.tensor(0.0, device=cfg.device, dtype=cfg.dtype), persistent=False)
-        self.register_buffer("input_avg", torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype), persistent=False)
-        self.register_buffer("input_var", torch.zeros(cfg.n_dim, device=cfg.device, dtype=cfg.dtype), persistent=False)
+        self.register_buffer("mse_ema", torch.tensor(0.0, device=cfg.device), persistent=False)
+        self.register_buffer("input_avg", torch.zeros(cfg.n_dim, device=cfg.device), persistent=False)
+        self.register_buffer("input_var", torch.zeros(cfg.n_dim, device=cfg.device), persistent=False)
 
     @torch.no_grad()
     def record_firing_data(self, x: torch.Tensor):

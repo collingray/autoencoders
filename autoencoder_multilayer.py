@@ -100,11 +100,11 @@ class AutoEncoderMultiLayer(AutoEncoder):
 
         self.register_buffer("num_forward_passes", torch.tensor(0, device=cfg.device, dtype=torch.int32),
                              persistent=False)
-        self.register_buffer("mse_ema", torch.zeros(self.num_layers, device=cfg.device, dtype=cfg.dtype),
+        self.register_buffer("mse_ema", torch.zeros(self.num_layers, device=cfg.device),
                              persistent=False)
-        self.register_buffer("input_avg", torch.zeros(self.num_layers, cfg.n_dim, device=cfg.device, dtype=cfg.dtype),
+        self.register_buffer("input_avg", torch.zeros(self.num_layers, cfg.n_dim, device=cfg.device),
                              persistent=False)
-        self.register_buffer("input_var", torch.zeros(self.num_layers, cfg.n_dim, device=cfg.device, dtype=cfg.dtype),
+        self.register_buffer("input_var", torch.zeros(self.num_layers, cfg.n_dim, device=cfg.device),
                              persistent=False)
 
     def save(self, checkpoint):
