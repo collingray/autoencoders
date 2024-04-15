@@ -51,7 +51,7 @@ class AutoEncoderMultiLayer(AutoEncoder):
     """
 
     def __init__(self, cfg: AutoEncoderMultiLayerConfig):
-        self.num_layers = len(cfg.act_norms) if cfg.act_norms is list else cfg.act_norms
+        self.num_layers = len(cfg.act_norms) if isinstance(cfg.act_norms, list) else cfg.act_norms
 
         super().__init__(cfg)
 
