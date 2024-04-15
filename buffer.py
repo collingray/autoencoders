@@ -16,6 +16,7 @@ class ActivationsBufferConfig:
             dataset_name,
             act_site,
             dataset_split=None,
+            dataset_config=None,
             buffer_size=256,
             min_capacity=128,
             model_batch_size=8,
@@ -36,6 +37,7 @@ class ActivationsBufferConfig:
         :param dataset_name: the name of the hf dataset to use
         :param act_site: the tl key to get activations from
         :param dataset_split: the split of the dataset to use
+        :param dataset_config: the config to use when loading the dataset
         :param buffer_size: the size of the buffer, in number of activations
         :param min_capacity: the minimum guaranteed capacity of the buffer, in number of activations, used to determine
         when to refresh the buffer
@@ -63,6 +65,7 @@ class ActivationsBufferConfig:
         self.act_site = act_site
         self.act_names = [f"blocks.{layer}.{act_site}" for layer in layers]  # the tl keys to grab activations from todo
         self.dataset_split = dataset_split
+        self.dataset_config = dataset_config
         self.buffer_size = buffer_size
         self.min_capacity = min_capacity
         self.model_batch_size = model_batch_size
@@ -100,7 +103,11 @@ class ActivationsBuffer:
         self.dataset_pointer = 0
 
         # load the dataset into a looping data loader
-        dataset = datasets.load_dataset(cfg.dataset_name, split=cfg.dataset_split)
+        if cfg.dataset_config:
+            dataset = datasets.load_dataset(cfg.dataset_name, cfg.dataset_config, split=cfg.dataset_split)
+        else:
+            dataset = datasets.load_dataset(cfg.dataset_name, split=cfg.dataset_split)
+
         self.data_loader = torch.utils.data.DataLoader(
             dataset['text'],
             batch_size=cfg.model_batch_size,
