@@ -1,3 +1,4 @@
+import gc
 import json
 from dataclasses import dataclass
 from typing import Optional
@@ -35,7 +36,7 @@ class AutoEncoderConfig:
     lambda_reg: float = 0.001
     record_data: bool = True
     num_firing_buckets: int = 16
-    firing_bucket_size: int = 2**18
+    firing_bucket_size: int = 2 ** 18
     name: str = "autoencoder"
     save_dir: Optional[str] = None
 
@@ -170,47 +171,60 @@ class AutoEncoder(nn.Module):
         Resample dead neurons according to Anthropic's method
         (see https://transformer-circuits.pub/2023/monosemantic-features#appendix-autoencoder-resampling)
         """
-        square_input_losses = torch.cat(
-            [self.forward(inputs[i:i + batch_size])[1] for i in range(0, len(inputs), batch_size)]
-        ) ** 2
 
-        dead_neuron_mask = self.neuron_firings.view(-1, self.cfg.m_dim).sum(dim=0) == 0
-        dead_neuron_idxs = torch.where(dead_neuron_mask)[0]
+        with torch.no_grad():
+            gc.collect()
+            torch.cuda.empty_cache()
 
-        print(f"Resampling {len(dead_neuron_idxs)} dead neurons")
+            dead_neuron_mask = self.neuron_firings.view(-1, self.cfg.m_dim).sum(dim=0) == 0
+            dead_neuron_idxs = torch.where(dead_neuron_mask)[0]
 
-        # Resample neurons with probability proportional to the square loss
-        neuron_probs = square_input_losses / square_input_losses.sum()
+            if len(dead_neuron_idxs) == 0:
+                print("No dead neurons to resample")
+                return
 
-        # Resample inputs that caused dead neurons to fire, normalize to unit l2
-        sampled_inputs = nn.functional.normalize(inputs[torch.multinomial(neuron_probs, len(dead_neuron_idxs))], dim=-1)
+            print(f"Resampling {len(dead_neuron_idxs)} dead neurons")
 
-        # Calculate the average norm of the encoder weights for the live neurons
-        avg_encoder_norm = self.encoder.weight[~dead_neuron_mask].norm(dim=1).mean()
+            square_input_losses = torch.cat(
+                [self.forward(inputs[i:i + batch_size], mean_over_batch=False)[1] for i in range(0, len(inputs), batch_size)]
+            ) ** 2
 
-        # Set the weights of the dead neurons to the resampled inputs, normalized to 20% of the average encoder norm
-        self.encoder.weight[dead_neuron_idxs] = sampled_inputs * avg_encoder_norm * 0.2
+            inputs = inputs.view(-1, self.cfg.n_dim)
+            square_input_losses = square_input_losses.view(-1)
 
-        # Set the decoder weights of the dead neurons to the normed inputs
-        self.decoder.weight[:, dead_neuron_idxs] = sampled_inputs.T
+            # Resample neurons with probability proportional to the square loss
+            neuron_probs = square_input_losses / square_input_losses.sum()
 
-        # Set the biases of the dead neurons to 0
-        self.pre_activation_bias[dead_neuron_idxs] = 0
+            # Resample inputs that caused dead neurons to fire, normalize to unit l2
+            sampled_inputs = nn.functional.normalize(inputs[torch.multinomial(neuron_probs, len(dead_neuron_idxs))],
+                                                     dim=-1)
 
-        # Reset optimizer params for changed weights/biases
-        optim_state = optimizer.state_dict()["state"]
+            # Calculate the average norm of the encoder weights for the live neurons
+            avg_encoder_norm = self.encoder.weight[~dead_neuron_mask].norm(dim=1).mean()
 
-        # bias
-        optim_state[1]["exp_avg"][dead_neuron_idxs] = 0
-        optim_state[1]["exp_avg_sq"][dead_neuron_idxs] = 0
+            # Set the weights of the dead neurons to the resampled inputs, normalized to 20% of the average encoder norm
+            self.encoder.weight[dead_neuron_idxs] = sampled_inputs * avg_encoder_norm * 0.2
 
-        # encoder weights
-        optim_state[2]["exp_avg"][dead_neuron_idxs] = 0
-        optim_state[2]["exp_avg_sq"][dead_neuron_idxs] = 0
+            # Set the decoder weights of the dead neurons to the normed inputs
+            self.decoder.weight[:, dead_neuron_idxs] = sampled_inputs.T
 
-        # decoder weights
-        optim_state[3]["exp_avg"][:, dead_neuron_idxs] = 0
-        optim_state[3]["exp_avg_sq"][:, dead_neuron_idxs] = 0
+            # Set the biases of the dead neurons to 0
+            self.pre_activation_bias[dead_neuron_idxs] = 0
+
+            # Reset optimizer params for changed weights/biases
+            optim_state = optimizer.state_dict()["state"]
+
+            # bias
+            optim_state[1]["exp_avg"][dead_neuron_idxs] = 0
+            optim_state[1]["exp_avg_sq"][dead_neuron_idxs] = 0
+
+            # encoder weights
+            optim_state[2]["exp_avg"][dead_neuron_idxs] = 0
+            optim_state[2]["exp_avg_sq"][dead_neuron_idxs] = 0
+
+            # decoder weights
+            optim_state[3]["exp_avg"][:, dead_neuron_idxs] = 0
+            optim_state[3]["exp_avg_sq"][:, dead_neuron_idxs] = 0
 
     def register_data_buffers(self, cfg):
         # Bucketed rolling avg. for memory efficiency

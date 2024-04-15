@@ -87,7 +87,7 @@ class AutoEncoderMultiLayerTrainer:
                 not self.cfg.num_resamples or self.steps // self.cfg.steps_per_resample <= self.cfg.num_resamples):
             assert buffer is not None, "Buffer must be provided to resample neurons"
 
-            inputs = buffer.next(batch=2 ** 16).to(self.encoder.cfg.device, dtype=self.encoder.cfg.dtype)
+            inputs = buffer.next(batch=2 ** 14).to(device=self.encoder.cfg.device)
             self.encoder.resample_neurons(inputs, batch_size=2 ** 12, optimizer=self.optimizer)
 
         if self.steps % self.cfg.steps_per_report == 0:
